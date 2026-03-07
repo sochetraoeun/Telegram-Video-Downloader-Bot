@@ -1,14 +1,20 @@
 """Application settings loaded from environment variables."""
 
+import os
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
 
 class Settings(BaseSettings):
-    """Bot configuration from .env file."""
+    """Bot configuration from .env file or environment variables."""
 
-    # Bot
-    bot_token: str = Field(..., description="Telegram bot token")
+    # Bot (BOT_TOKEN is the env var used by Railway, Docker, etc.)
+    bot_token: str = Field(
+        ...,
+        description="Telegram bot token",
+        validation_alias="BOT_TOKEN",
+    )
     bot_username: str = Field(default="", description="Bot username")
 
     # Limits
@@ -33,8 +39,24 @@ class Settings(BaseSettings):
     def max_file_size_bytes(self) -> int:
         return self.max_file_size_mb * 1024 * 1024
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
-# Singleton
-settings = Settings()
+# Singleton with helpful error when BOT_TOKEN is missing
+def _load_settings() -> Settings:
+    try:
+        return Settings()
+    except Exception as e:
+        if "bot_token" in str(e).lower() and not os.environ.get("BOT_TOKEN"):
+            raise RuntimeError(
+                "BOT_TOKEN is required but not set. "
+                "Add it in Railway → Variables → BOT_TOKEN = your_token_from_BotFather"
+            ) from e
+        raise
+
+
+settings = _load_settings()

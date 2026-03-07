@@ -109,7 +109,9 @@ Railway will start building your project.
 
 ---
 
-### Step 4: Add your Bot Token
+### Step 4: Add your Bot Token (required)
+
+> **Important:** Without `BOT_TOKEN`, the bot will crash with "bot_token Field required". Add it before the first deploy.
 
 1. In Railway, click on your **service** (the deployed app)
 2. Go to the **Variables** tab
@@ -160,6 +162,7 @@ In Railway → Variables, you can add (all optional):
 
 | Problem                     | What to try                                                     |
 | --------------------------- | --------------------------------------------------------------- |
+| `bot_token` Field required  | Add `BOT_TOKEN` in Railway → Variables (Step 4). Must be set.   |
 | Build fails                 | Check **Logs** for the error. Often: missing file or wrong path |
 | `yt-dlp: command not found` | Use the Dockerfile option instead (see below)                   |
 | `ffmpeg: command not found` | Same — use Dockerfile                                           |
