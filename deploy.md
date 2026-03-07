@@ -36,6 +36,36 @@ This tells Railway to install Python, ffmpeg, yt-dlp, and how to run your bot.
 
 ---
 
+### Step 1.5: Run build test locally (optional but recommended)
+
+Before pushing to Railway, verify the build works on your machine.
+
+**Option A: Docker build (recommended — matches Railway)**
+
+```bash
+# Build the image (same as Railway will do)
+docker build -t telegram-bot .
+
+
+# Run the bot (requires BOT_TOKEN in .env or pass it)
+docker run --env-file .env telegram-bot
+```
+
+**Option B: Run with Python directly**
+
+```bash
+# Install system deps first: ffmpeg, yt-dlp (via brew on macOS, apt on Linux)
+# brew install ffmpeg yt-dlp   # macOS
+# sudo apt install ffmpeg && pip install yt-dlp   # Linux
+
+pip install -r requirements.txt
+python src/bot/main.py
+```
+
+If the bot starts and you see `🟢 Bot is now running!` in the logs, the build is good.
+
+---
+
 ### Step 2: Push your project to GitHub
 
 If your project is not on GitHub yet:
@@ -165,6 +195,7 @@ Railway will detect the Dockerfile and use it instead of Nixpacks.
 - [ ] Have Railway + GitHub accounts
 - [ ] Have Telegram bot token from BotFather
 - [ ] Create `nixpacks.toml` in project root
+- [ ] Run local build test (Docker or Python)
 - [ ] Push project to GitHub
 - [ ] Create Railway project → Deploy from GitHub
 - [ ] Add `BOT_TOKEN` in Variables
