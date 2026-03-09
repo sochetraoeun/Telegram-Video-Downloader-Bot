@@ -233,15 +233,16 @@ class InstagramDownloader(BaseDownloader):
             async with httpx.AsyncClient(
                 timeout=20, follow_redirects=True, headers=_MOBILE_HEADERS
             ) as client:
-                # Try embed page first (gives us all carousel images)
                 image_urls = await self._scrape_embed_images(client, shortcode)
+
+                if not image_urls:
+                    image_urls = await self._scrape_graphql_images(client, shortcode)
 
                 if image_urls:
                     return await self._fetch_scraped_images(
                         client, image_urls, url
                     )
 
-                # Fallback: /media/?size=l for single image posts
                 return await self._fetch_media_endpoint(client, shortcode, url)
 
         except DownloadError:
@@ -258,8 +259,9 @@ class InstagramDownloader(BaseDownloader):
         """Scrape image URLs from the Instagram embed page.
 
         The embed page renders authenticated CDN URLs in <img src> and
-        <srcset> attributes. We extract them, filter out profile pics,
-        and keep the highest resolution variant per unique image.
+        <srcset> attributes. We extract them, filter out profile pics /
+        tiny thumbnails, and keep the highest resolution variant per
+        unique image.
         """
         embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
         logger.info("[Instagram] Fetching embed page for image URLs")
@@ -271,27 +273,49 @@ class InstagramDownloader(BaseDownloader):
         page = resp.text
         all_urls: list[str] = []
 
+        cdn_pattern = re.compile(
+            r"(https?://[a-z0-9\-]+\.cdninstagram\.com/[^\s\"']+)"
+            r"|(https?://instagram\.[a-z.]+\.fbcdn\.net/[^\s\"']+)"
+        )
+
+        for m in cdn_pattern.finditer(page):
+            raw = m.group(0)
+            url_clean = htmlmod.unescape(raw).split("\\")[0].rstrip('"\')')
+            all_urls.append(url_clean)
+
         for u in re.findall(
-            r'src="(https://instagram[^"]+\.fbcdn\.net[^"]+\.jpg[^"]*)"', page
+            r'src="(https://instagram[^"]+\.fbcdn\.net[^"]+)"', page
         ):
             all_urls.append(htmlmod.unescape(u))
 
         for srcset in re.findall(r'srcset="([^"]+)"', page):
             for u in re.findall(
-                r"(https://instagram[^\s]+\.jpg[^\s,]*)", srcset
+                r"(https://[^\s,]+)", srcset
             ):
-                all_urls.append(htmlmod.unescape(u))
+                decoded = htmlmod.unescape(u)
+                if "cdninstagram" in decoded or "fbcdn" in decoded:
+                    all_urls.append(decoded)
 
-        # Deduplicate by image ID, keep highest resolution, skip profile pics
-        by_id: dict[str, tuple[str, int]] = {}
+        skip_patterns = ("e0_s150x150", "s150x150", "t51.2885", "/s64x64/", "/s96x96/")
+        image_exts = (".jpg", ".jpeg", ".png", ".webp")
+
+        filtered: list[str] = []
         for u in all_urls:
-            if "e0_s150x150" in u or "t51.2885" in u:
+            if any(p in u for p in skip_patterns):
                 continue
-            m = re.search(r"/(\d+_\d+_\d+_n)\.jpg", u)
-            if not m:
-                continue
-            iid = m.group(1)
-            size = re.search(r"p(\d+)x", u)
+            path = u.split("?")[0]
+            if any(path.endswith(ext) for ext in image_exts):
+                filtered.append(u)
+
+        by_id: dict[str, tuple[str, int]] = {}
+        for u in filtered:
+            m_id = re.search(r"/(\d+_\d+_\d+_\w+)\.\w+", u)
+            if m_id:
+                iid = m_id.group(1)
+            else:
+                iid = u.split("?")[0].rsplit("/", 1)[-1]
+
+            size = re.search(r"[/_](\d{3,4})x", u)
             res = int(size.group(1)) if size else 0
             if iid not in by_id or res > by_id[iid][1]:
                 by_id[iid] = (u, res)
@@ -299,6 +323,49 @@ class InstagramDownloader(BaseDownloader):
         urls = [url for url, _ in by_id.values()]
         logger.info(f"[Instagram] Found {len(urls)} image(s) in embed page")
         return urls
+
+    async def _scrape_graphql_images(
+        self, client: httpx.AsyncClient, shortcode: str
+    ) -> list[str]:
+        """Fallback: extract carousel image URLs from the post page's embedded JSON."""
+        post_url = f"https://www.instagram.com/p/{shortcode}/"
+        logger.info("[Instagram] Trying page JSON extraction for carousel images")
+
+        try:
+            resp = await client.get(post_url)
+            if resp.status_code != 200:
+                return []
+
+            page = resp.text
+            urls: list[str] = []
+
+            for pattern in [
+                r'"display_url"\s*:\s*"(https?://[^"]+)"',
+                r'"image_versions2".*?"url"\s*:\s*"(https?://[^"]+)"',
+                r'"display_resources".*?"src"\s*:\s*"(https?://[^"]+)"',
+            ]:
+                for match in re.finditer(pattern, page):
+                    raw = match.group(1).replace("\\u0026", "&")
+                    if raw not in urls:
+                        urls.append(raw)
+
+            if not urls:
+                for m in re.finditer(
+                    r'"(https?://(?:[a-z0-9-]+\.)?cdninstagram\.com/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"',
+                    page,
+                ):
+                    raw = m.group(1).replace("\\u0026", "&")
+                    if any(s in raw for s in ("s150x150", "s64x64", "s96x96", "t51.2885")):
+                        continue
+                    if raw not in urls:
+                        urls.append(raw)
+
+            logger.info(f"[Instagram] Page JSON extraction found {len(urls)} image(s)")
+            return urls
+
+        except Exception as e:
+            logger.warning(f"[Instagram] Page JSON extraction failed: {e}")
+            return []
 
     async def _fetch_scraped_images(
         self,
