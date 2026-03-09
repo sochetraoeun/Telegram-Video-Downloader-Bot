@@ -116,18 +116,17 @@ class InstagramDownloader(BaseDownloader):
         return False
 
     def _is_image_post(self, info: dict) -> bool:
-        ext = info.get("ext", "")
-        if ext in ("jpg", "jpeg", "png", "webp"):
-            return True
-
-        for fmt in info.get("formats", []):
-            if fmt.get("ext") in ("jpg", "jpeg", "png", "webp"):
-                return True
-
         video_formats = [
             f for f in info.get("formats", [])
             if f.get("vcodec", "none") != "none"
         ]
+        if video_formats:
+            return False
+
+        ext = info.get("ext", "")
+        if ext in ("jpg", "jpeg", "png", "webp"):
+            return True
+
         if not video_formats and info.get("url"):
             return True
 
