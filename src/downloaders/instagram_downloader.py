@@ -51,19 +51,37 @@ class InstagramDownloader(BaseDownloader):
                 retryable=False,
             )
 
+        is_reel = bool(re.search(r"instagram\.com/reels?/", url, re.IGNORECASE))
+
         info = await self._extract_info(url)
 
-        if info is None:
-            logger.info("[Instagram] yt-dlp returned no data, trying HTTP fallback")
-            return await self._download_post_via_http(url)
+        if info is not None:
+            logger.info(
+                f"[Instagram] yt-dlp returned info: ext={info.get('ext')}, "
+                f"vcodec={info.get('vcodec', 'N/A')}, "
+                f"formats={len(info.get('formats', []))}, "
+                f"type={info.get('_type', 'single')}"
+            )
 
-        if self._is_carousel(info):
-            return await self._download_carousel(url, info)
+            if self._is_carousel(info):
+                return await self._download_carousel(url, info)
 
-        if self._is_image_post(info):
-            return await self._download_single_image(url, info)
+            if self._is_image_post(info):
+                return await self._download_single_image(url, info)
 
-        return await self._download_video(url, info)
+            return await self._download_video(url, info)
+
+        # yt-dlp returned no data
+        if is_reel:
+            logger.warning("[Instagram] yt-dlp failed for reel, retrying download")
+            raise DownloadError(
+                "Could not extract reel video data",
+                platform=self.platform,
+                retryable=True,
+            )
+
+        logger.info("[Instagram] yt-dlp returned no data, trying HTTP fallback for images")
+        return await self._download_post_via_http(url)
 
     # ── yt-dlp info extraction ─────────────────────────────────────────
 
@@ -125,20 +143,34 @@ class InstagramDownloader(BaseDownloader):
         return False
 
     def _is_image_post(self, info: dict) -> bool:
-        video_formats = [
-            f for f in info.get("formats", [])
-            if f.get("vcodec", "none") != "none"
-        ]
-        if video_formats:
+        ext = info.get("ext", "")
+        vcodec = info.get("vcodec", "none")
+        acodec = info.get("acodec", "none")
+        formats = info.get("formats", [])
+
+        if ext in ("mp4", "webm", "mkv", "mov", "flv"):
+            logger.debug(f"[Instagram] Not image: video ext={ext}")
             return False
 
-        ext = info.get("ext", "")
+        if vcodec not in ("none", None, ""):
+            logger.debug(f"[Instagram] Not image: vcodec={vcodec}")
+            return False
+
+        video_formats = [f for f in formats if f.get("vcodec", "none") not in ("none", None, "")]
+        if video_formats:
+            logger.debug(f"[Instagram] Not image: {len(video_formats)} video format(s) found")
+            return False
+
+        audio_only_formats = [f for f in formats if f.get("acodec", "none") not in ("none", None, "")]
+        if audio_only_formats and not video_formats and ext not in ("jpg", "jpeg", "png", "webp"):
+            logger.debug("[Instagram] Not image: has audio formats, likely a video")
+            return False
+
         if ext in ("jpg", "jpeg", "png", "webp"):
+            logger.debug(f"[Instagram] Detected image: ext={ext}")
             return True
 
-        if not video_formats and info.get("url"):
-            return True
-
+        logger.debug(f"[Instagram] Not image: ext={ext}, treating as video")
         return False
 
     # ── Video download ────────────────────────────────────────────────
@@ -280,10 +312,17 @@ class InstagramDownloader(BaseDownloader):
                 return []
 
             item = items[0]
+            media_type = item.get("media_type")
+            # media_type: 1 = image, 2 = video, 8 = carousel
+            if media_type == 2:
+                logger.info("[Instagram] API says this is a video, not an image post")
+                return []
 
             carousel = item.get("carousel_media", [])
-            if carousel:
-                urls = self._extract_image_urls_from_slides(carousel)
+            if carousel or media_type == 8:
+                slides = carousel or []
+                image_slides = [s for s in slides if s.get("media_type", 1) != 2]
+                urls = self._extract_image_urls_from_slides(image_slides)
                 logger.info(f"[Instagram] API found {len(urls)} carousel image(s)")
                 return urls
 
