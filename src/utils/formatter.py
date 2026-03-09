@@ -1,6 +1,15 @@
 """Message formatting utilities."""
 
+import re
+
 from src.downloaders.base_downloader import MediaType
+
+_MARKDOWN_ESCAPE_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
+
+
+def _escape_markdown(text: str) -> str:
+    """Escape special Markdown characters in user-generated text."""
+    return _MARKDOWN_ESCAPE_RE.sub(r"\\\1", text)
 
 
 def format_downloading_message(platform: str, url: str) -> str:
@@ -20,7 +29,8 @@ def format_success_message(media_type: MediaType, caption: str | None = None) ->
     label = labels.get(media_type, "media")
     msg = f"✅ Downloaded {label}"
     if caption:
-        msg += f"\n\n📝 {caption}"
+        safe_caption = _escape_markdown(caption)
+        msg += f"\n\n📝 {safe_caption}"
     return msg
 
 
