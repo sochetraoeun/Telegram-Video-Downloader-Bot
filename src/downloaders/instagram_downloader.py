@@ -29,6 +29,10 @@ class InstagramDownloader(BaseDownloader):
 
     platform = "instagram"
 
+    _STORY_PATTERN = re.compile(
+        r"https?://(www\.)?instagram\.com/stories/.+", re.IGNORECASE
+    )
+
     async def supports(self, url: str) -> bool:
         pattern = re.compile(
             r"https?://(www\.)?instagram\.com/(reel|p|stories|reels)/.+", re.IGNORECASE
@@ -38,6 +42,14 @@ class InstagramDownloader(BaseDownloader):
     async def download(self, url: str) -> DownloadResult:
         """Download Instagram media (video or images) into memory."""
         logger.info(f"[Instagram] Downloading: {url}")
+
+        if self._STORY_PATTERN.match(url):
+            raise DownloadError(
+                "Instagram Stories require login and are not supported. "
+                "Try sending a Reel or Post link instead.",
+                platform=self.platform,
+                retryable=False,
+            )
 
         info = await self._extract_info(url)
 

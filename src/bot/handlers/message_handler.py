@@ -99,6 +99,8 @@ async def _process_media(
         error_type = "download_failed"
         if "too large" in e.message.lower():
             error_type = "too_large"
+        elif "stories" in e.message.lower() and not e.retryable:
+            error_type = "stories_unsupported"
 
         try:
             await status_msg.edit_text(format_error_message(error_type))

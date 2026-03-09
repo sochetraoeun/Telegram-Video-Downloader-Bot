@@ -39,6 +39,7 @@ def format_error_message(error_type: str) -> str:
     messages = {
         "invalid_url": "❌ That doesn't look like a valid URL. Please send a TikTok or Instagram link.",
         "unsupported_platform": "🚧 Only **TikTok** and **Instagram** links are supported right now.",
+        "stories_unsupported": "🔒 Instagram Stories require login and can't be downloaded. Try sending a Reel or Post link instead.",
         "download_failed": "😔 Download failed. The content might be private or unavailable. Please try again.",
         "too_large": "📏 Video is too large (>50MB) even after compression. Try a shorter video.",
         "rate_limited": "⏱️ Slow down! You've hit the rate limit. Please wait a moment.",
