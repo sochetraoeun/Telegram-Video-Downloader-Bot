@@ -1,5 +1,6 @@
 """Application settings loaded from environment variables."""
 
+import base64
 import os
 
 from pydantic_settings import BaseSettings
@@ -31,6 +32,18 @@ class Settings(BaseSettings):
     # Supported platforms
     supported_platforms: str = Field(default="tiktok,instagram")
 
+    # Instagram (optional — for Stories support)
+    instagram_cookies_file: str | None = Field(
+        default=None,
+        description="Path to Netscape-format cookies.txt for Instagram (enables Stories)",
+        validation_alias="INSTAGRAM_COOKIES_FILE",
+    )
+    instagram_cookies_base64: str | None = Field(
+        default=None,
+        description="Base64-encoded cookies.txt (for Railway/deploy — decoded to temp file at startup)",
+        validation_alias="INSTAGRAM_COOKIES_BASE64",
+    )
+
     @property
     def platforms_list(self) -> list[str]:
         return [p.strip() for p in self.supported_platforms.split(",")]
@@ -49,7 +62,7 @@ class Settings(BaseSettings):
 # Singleton with helpful error when BOT_TOKEN is missing
 def _load_settings() -> Settings:
     try:
-        return Settings()
+        s = Settings()
     except Exception as e:
         if "bot_token" in str(e).lower() and not os.environ.get("BOT_TOKEN"):
             raise RuntimeError(
@@ -57,6 +70,22 @@ def _load_settings() -> Settings:
                 "Add it in Railway → Variables → BOT_TOKEN = your_token_from_BotFather"
             ) from e
         raise
+
+    # If INSTAGRAM_COOKIES_BASE64 is set (e.g. Railway), decode and write to temp file
+    if s.instagram_cookies_base64 and not s.instagram_cookies_file:
+        try:
+            cookie_bytes = base64.b64decode(s.instagram_cookies_base64)
+            cookie_path = "/tmp/instagram_cookies.txt"
+            with open(cookie_path, "wb") as f:
+                f.write(cookie_bytes)
+            s = s.model_copy(update={"instagram_cookies_file": cookie_path})
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to decode INSTAGRAM_COOKIES_BASE64: {e}. "
+                "Ensure it's valid base64 from: base64 -i instagram_cookies.txt | tr -d '\\n'"
+            ) from e
+
+    return s
 
 
 settings = _load_settings()

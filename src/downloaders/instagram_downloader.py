@@ -1,14 +1,17 @@
 """Instagram media downloader — downloads videos and images directly into memory."""
 
 import io
+import os
 import asyncio
 import json
 import re
 import html as htmlmod
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from loguru import logger
 
+from src.config.settings import settings
 from src.downloaders.base_downloader import (
     BaseDownloader, DownloadResult, DownloadError, MediaType,
 )
@@ -33,6 +36,27 @@ class InstagramDownloader(BaseDownloader):
         r"https?://(www\.)?instagram\.com/stories/.+", re.IGNORECASE
     )
 
+    def _get_cookies_args(self, url: str) -> list[str]:
+        """Return --cookies args for story URLs when cookies file is configured."""
+        if not self._STORY_PATTERN.match(url):
+            return []
+        path = settings.instagram_cookies_file
+        if not path:
+            return []
+        # Resolve to absolute path so it works regardless of cwd
+        abs_path = os.path.abspath(path)
+        if not os.path.exists(abs_path):
+            logger.warning(f"[Instagram] Cookies file not found: {abs_path}")
+            return []
+        return ["--cookies", abs_path]
+
+    def _normalize_story_url(self, url: str) -> str:
+        """Strip query params from story URLs — some can cause yt-dlp to fail."""
+        if not self._STORY_PATTERN.match(url):
+            return url
+        parsed = urlparse(url)
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
     async def supports(self, url: str) -> bool:
         pattern = re.compile(
             r"https?://(www\.)?instagram\.com/(reel|p|stories|reels)/.+", re.IGNORECASE
@@ -41,15 +65,18 @@ class InstagramDownloader(BaseDownloader):
 
     async def download(self, url: str) -> DownloadResult:
         """Download Instagram media (video or images) into memory."""
+        # Normalize story URLs (strip query params that can cause issues)
+        url = self._normalize_story_url(url)
         logger.info(f"[Instagram] Downloading: {url}")
 
         if self._STORY_PATTERN.match(url):
-            raise DownloadError(
-                "Instagram Stories require login and are not supported. "
-                "Try sending a Reel or Post link instead.",
-                platform=self.platform,
-                retryable=False,
-            )
+            if not self._get_cookies_args(url):
+                raise DownloadError(
+                    "Instagram Stories require login and are not supported. "
+                    "Try sending a Reel or Post link instead.",
+                    platform=self.platform,
+                    retryable=False,
+                )
 
         is_reel = bool(re.search(r"instagram\.com/reels?/", url, re.IGNORECASE))
 
@@ -72,6 +99,12 @@ class InstagramDownloader(BaseDownloader):
             return await self._download_video(url, info)
 
         # yt-dlp returned no data
+        if self._STORY_PATTERN.match(url):
+            raise DownloadError(
+                "Could not fetch story — session may have expired. Please update the cookies file.",
+                platform=self.platform,
+                retryable=False,
+            )
         if is_reel:
             logger.warning("[Instagram] yt-dlp failed for reel, retrying download")
             raise DownloadError(
@@ -88,13 +121,18 @@ class InstagramDownloader(BaseDownloader):
     async def _extract_info(self, url: str) -> dict | None:
         """Extract metadata with yt-dlp --dump-json."""
         try:
-            process = await asyncio.create_subprocess_exec(
+            args = [
                 "yt-dlp",
                 "--no-warnings",
                 "--no-check-certificates",
                 "--dump-json",
                 "--quiet",
-                url,
+            ]
+            args.extend(self._get_cookies_args(url))
+            args.append(url)
+
+            process = await asyncio.create_subprocess_exec(
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -105,6 +143,25 @@ class InstagramDownloader(BaseDownloader):
             if process.returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
                 logger.warning(f"[Instagram] yt-dlp returned error: {error_msg}")
+                # For stories, raise with helpful message instead of returning None
+                if self._STORY_PATTERN.match(url):
+                    if "unreachable" in error_msg.lower():
+                        raise DownloadError(
+                            "Story could not be reached — it may have expired (stories last 24h) or the account may be private.",
+                            platform=self.platform,
+                            retryable=False,
+                        )
+                    if "login" in error_msg.lower() or "cookie" in error_msg.lower():
+                        raise DownloadError(
+                            "Instagram session expired. Please export fresh cookies and update the cookies file.",
+                            platform=self.platform,
+                            retryable=False,
+                        )
+                    raise DownloadError(
+                        f"Story download failed: {error_msg[:200]}",
+                        platform=self.platform,
+                        retryable=False,
+                    )
                 return None
 
             raw = stdout.decode().strip()
@@ -178,14 +235,19 @@ class InstagramDownloader(BaseDownloader):
     async def _download_video(self, url: str, info: dict) -> DownloadResult:
         """Download video bytes into memory via yt-dlp."""
         try:
-            process = await asyncio.create_subprocess_exec(
+            args = [
                 "yt-dlp",
                 "--no-warnings",
                 "--no-check-certificates",
                 "--format", "best[filesize<50M]/best",
                 "--output", "-",
                 "--quiet",
-                url,
+            ]
+            args.extend(self._get_cookies_args(url))
+            args.append(url)
+
+            process = await asyncio.create_subprocess_exec(
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -667,14 +729,19 @@ class InstagramDownloader(BaseDownloader):
 
     async def _download_video_bytes(self, url: str) -> io.BytesIO:
         """Download a single video entry into a BytesIO buffer."""
-        process = await asyncio.create_subprocess_exec(
+        args = [
             "yt-dlp",
             "--no-warnings",
             "--no-check-certificates",
             "--format", "best[filesize<50M]/best",
             "--output", "-",
             "--quiet",
-            url,
+        ]
+        args.extend(self._get_cookies_args(url))
+        args.append(url)
+
+        process = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

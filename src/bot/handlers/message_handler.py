@@ -99,13 +99,22 @@ async def _process_media(
         error_type = "download_failed"
         if "too large" in e.message.lower():
             error_type = "too_large"
-        elif "stories" in e.message.lower() and not e.retryable:
+        elif "stories" in e.message.lower() and not e.retryable and "require login" in e.message.lower():
             error_type = "stories_unsupported"
 
+        # Use the actual error message for story/session errors (more helpful)
+        if not e.retryable and any(
+            x in e.message.lower()
+            for x in ("story", "expired", "session", "unreachable", "private")
+        ):
+            msg = f"❌ {e.message}"
+        else:
+            msg = format_error_message(error_type)
+
         try:
-            await status_msg.edit_text(format_error_message(error_type))
+            await status_msg.edit_text(msg)
         except Exception:
-            await update.message.reply_text(format_error_message(error_type))
+            await update.message.reply_text(msg)
 
         logger.error(f"Download failed for {platform}: {e.message}")
 

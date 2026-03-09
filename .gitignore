@@ -16,6 +16,9 @@ env/
 # Environment
 .env
 
+# Instagram cookies (sensitive — never commit)
+instagram_cookies.txt
+
 # IDE
 .vscode/
 .idea/
