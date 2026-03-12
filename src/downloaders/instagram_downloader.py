@@ -5,7 +5,6 @@ import os
 import asyncio
 import json
 import re
-import html as htmlmod
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -13,7 +12,19 @@ from loguru import logger
 
 from src.config.settings import settings
 from src.downloaders.base_downloader import (
-    BaseDownloader, DownloadResult, DownloadError, MediaType,
+    BaseDownloader,
+    DownloadResult,
+    DownloadError,
+    MediaType,
+)
+from src.downloaders.instagram_image_download import (
+    download_single_image,
+    download_post_via_http,
+    get_best_image_url,
+)
+from src.downloaders.instagram_video_download import (
+    download_video,
+    download_video_bytes,
 )
 
 _MOBILE_HEADERS = {
@@ -43,7 +54,6 @@ class InstagramDownloader(BaseDownloader):
         path = settings.instagram_cookies_file
         if not path:
             return []
-        # Resolve to absolute path so it works regardless of cwd
         abs_path = os.path.abspath(path)
         if not os.path.exists(abs_path):
             logger.warning(f"[Instagram] Cookies file not found: {abs_path}")
@@ -59,13 +69,13 @@ class InstagramDownloader(BaseDownloader):
 
     async def supports(self, url: str) -> bool:
         pattern = re.compile(
-            r"https?://(www\.)?instagram\.com/(reel|p|stories|reels)/.+", re.IGNORECASE
+            r"https?://(www\.)?instagram\.com/(reel|p|stories|reels)/.+",
+            re.IGNORECASE,
         )
         return bool(pattern.match(url))
 
     async def download(self, url: str) -> DownloadResult:
         """Download Instagram media (video or images) into memory."""
-        # Normalize story URLs (strip query params that can cause issues)
         url = self._normalize_story_url(url)
         logger.info(f"[Instagram] Downloading: {url}")
 
@@ -94,11 +104,10 @@ class InstagramDownloader(BaseDownloader):
                 return await self._download_carousel(url, info)
 
             if self._is_image_post(info):
-                return await self._download_single_image(url, info)
+                return await download_single_image(url, info)
 
-            return await self._download_video(url, info)
+            return await download_video(url, info, self._get_cookies_args)
 
-        # yt-dlp returned no data
         if self._STORY_PATTERN.match(url):
             raise DownloadError(
                 "Could not fetch story — session may have expired. Please update the cookies file.",
@@ -113,10 +122,10 @@ class InstagramDownloader(BaseDownloader):
                 retryable=True,
             )
 
-        logger.info("[Instagram] yt-dlp returned no data, trying HTTP fallback for images")
-        return await self._download_post_via_http(url)
-
-    # ── yt-dlp info extraction ─────────────────────────────────────────
+        logger.info(
+            "[Instagram] yt-dlp returned no data, trying HTTP fallback for images"
+        )
+        return await download_post_via_http(url)
 
     async def _extract_info(self, url: str) -> dict | None:
         """Extract metadata with yt-dlp --dump-json."""
@@ -143,7 +152,6 @@ class InstagramDownloader(BaseDownloader):
             if process.returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
                 logger.warning(f"[Instagram] yt-dlp returned error: {error_msg}")
-                # For stories, raise with helpful message instead of returning None
                 if self._STORY_PATTERN.match(url):
                     if "unreachable" in error_msg.lower():
                         raise DownloadError(
@@ -202,7 +210,6 @@ class InstagramDownloader(BaseDownloader):
     def _is_image_post(self, info: dict) -> bool:
         ext = info.get("ext", "")
         vcodec = info.get("vcodec", "none")
-        acodec = info.get("acodec", "none")
         formats = info.get("formats", [])
 
         if ext in ("mp4", "webm", "mkv", "mov", "flv"):
@@ -213,14 +220,30 @@ class InstagramDownloader(BaseDownloader):
             logger.debug(f"[Instagram] Not image: vcodec={vcodec}")
             return False
 
-        video_formats = [f for f in formats if f.get("vcodec", "none") not in ("none", None, "")]
+        video_formats = [
+            f
+            for f in formats
+            if f.get("vcodec", "none") not in ("none", None, "")
+        ]
         if video_formats:
-            logger.debug(f"[Instagram] Not image: {len(video_formats)} video format(s) found")
+            logger.debug(
+                f"[Instagram] Not image: {len(video_formats)} video format(s) found"
+            )
             return False
 
-        audio_only_formats = [f for f in formats if f.get("acodec", "none") not in ("none", None, "")]
-        if audio_only_formats and not video_formats and ext not in ("jpg", "jpeg", "png", "webp"):
-            logger.debug("[Instagram] Not image: has audio formats, likely a video")
+        audio_only_formats = [
+            f
+            for f in formats
+            if f.get("acodec", "none") not in ("none", None, "")
+        ]
+        if (
+            audio_only_formats
+            and not video_formats
+            and ext not in ("jpg", "jpeg", "png", "webp")
+        ):
+            logger.debug(
+                "[Instagram] Not image: has audio formats, likely a video"
+            )
             return False
 
         if ext in ("jpg", "jpeg", "png", "webp"):
@@ -230,425 +253,13 @@ class InstagramDownloader(BaseDownloader):
         logger.debug(f"[Instagram] Not image: ext={ext}, treating as video")
         return False
 
-    # ── Video download ────────────────────────────────────────────────
-
-    async def _download_video(self, url: str, info: dict) -> DownloadResult:
-        """Download video bytes into memory via yt-dlp."""
-        try:
-            args = [
-                "yt-dlp",
-                "--no-warnings",
-                "--no-check-certificates",
-                "--format", "best[filesize<50M]/best",
-                "--output", "-",
-                "--quiet",
-            ]
-            args.extend(self._get_cookies_args(url))
-            args.append(url)
-
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=120
-            )
-
-            if process.returncode != 0:
-                error_msg = stderr.decode().strip() if stderr else "Unknown error"
-                raise DownloadError(
-                    f"yt-dlp failed: {error_msg}",
-                    platform=self.platform,
-                )
-
-            if not stdout:
-                raise DownloadError(
-                    "No video data received",
-                    platform=self.platform,
-                )
-
-            buffer = io.BytesIO(stdout)
-            file_size = len(stdout)
-            buffer.seek(0)
-
-            logger.info(f"[Instagram] Downloaded video: {file_size / 1024 / 1024:.1f} MB")
-
-            caption = info.get("title") or info.get("description")
-            if caption == "NA":
-                caption = None
-
-            return DownloadResult(
-                buffer=buffer,
-                filename="instagram_video.mp4",
-                file_size=file_size,
-                media_type=MediaType.VIDEO,
-                caption=caption,
-            )
-
-        except asyncio.TimeoutError:
-            raise DownloadError("Download timed out (>120s)", platform=self.platform)
-        except DownloadError:
-            raise
-        except Exception as e:
-            raise DownloadError(f"Unexpected error: {e}", platform=self.platform)
-
-    # ── Single image download ─────────────────────────────────────────
-
-    async def _download_single_image(self, url: str, info: dict) -> DownloadResult:
-        """Download a single image post using yt-dlp metadata or HTTP fallback."""
-        image_url = self._get_best_image_url(info)
-        if image_url:
-            return await self._fetch_single_image(image_url, info)
-        logger.warning("[Instagram] No image URL in metadata, falling back to HTTP")
-        return await self._download_post_via_http(url)
-
-    # ── HTTP fallback for image posts (single + carousel) ─────────────
-
-    async def _download_post_via_http(self, url: str) -> DownloadResult:
-        """Download post images via HTTP when yt-dlp can't handle them.
-
-        Uses structured APIs first (JSON with explicit post media),
-        then falls back to embed page scraping. Only downloads media
-        that belongs to the specific post — never profile data.
-        """
-        shortcode = self._extract_shortcode(url)
-        if not shortcode:
-            raise DownloadError(
-                "Could not extract post shortcode from URL",
-                platform=self.platform,
-                retryable=False,
-            )
-
-        try:
-            async with httpx.AsyncClient(
-                timeout=30, follow_redirects=True, headers=_MOBILE_HEADERS
-            ) as client:
-                # 1) Structured JSON API — most reliable, returns only post media
-                image_urls = await self._fetch_api_images(client, shortcode)
-
-                # 2) Post page — extract sidecar/carousel JSON from HTML
-                if not image_urls:
-                    image_urls = await self._extract_post_page_images(client, shortcode)
-
-                # 3) Embed page — structured carousel data from embed JS
-                if not image_urls:
-                    image_urls = await self._extract_embed_page_images(client, shortcode)
-
-                if image_urls:
-                    logger.info(f"[Instagram] Downloading {len(image_urls)} image(s) for post {shortcode}")
-                    return await self._fetch_images_to_result(client, image_urls, url)
-
-                # 4) Last resort — /media/?size=l (always returns 1 image)
-                return await self._fetch_media_endpoint(client, shortcode, url)
-
-        except DownloadError:
-            raise
-        except Exception as e:
-            raise DownloadError(
-                f"Image download failed: {e}",
-                platform=self.platform,
-            )
-
-    async def _fetch_api_images(
-        self, client: httpx.AsyncClient, shortcode: str
-    ) -> list[str]:
-        """Try Instagram's ?__a=1&__d=dis JSON API to get post media.
-
-        Returns image URLs only for media in this specific post.
-        For carousels, returns all slide images.
-        For single posts, returns the one image.
-        """
-        api_url = f"https://www.instagram.com/p/{shortcode}/?__a=1&__d=dis"
-        logger.info("[Instagram] Trying API endpoint for post images")
-
-        try:
-            resp = await client.get(api_url)
-            if resp.status_code != 200:
-                return []
-
-            data = resp.json()
-            items = data.get("items", [])
-            if not items:
-                return []
-
-            item = items[0]
-            media_type = item.get("media_type")
-            # media_type: 1 = image, 2 = video, 8 = carousel
-            if media_type == 2:
-                logger.info("[Instagram] API says this is a video, not an image post")
-                return []
-
-            carousel = item.get("carousel_media", [])
-            if carousel or media_type == 8:
-                slides = carousel or []
-                image_slides = [s for s in slides if s.get("media_type", 1) != 2]
-                urls = self._extract_image_urls_from_slides(image_slides)
-                logger.info(f"[Instagram] API found {len(urls)} carousel image(s)")
-                return urls
-
-            candidates = item.get("image_versions2", {}).get("candidates", [])
-            if candidates:
-                best = max(candidates, key=lambda c: c.get("width", 0) * c.get("height", 0))
-                url = best.get("url", "")
-                if url:
-                    logger.info("[Instagram] API found 1 image")
-                    return [url]
-
-            return []
-
-        except Exception as e:
-            logger.debug(f"[Instagram] API extraction failed: {e}")
-            return []
-
-    async def _extract_post_page_images(
-        self, client: httpx.AsyncClient, shortcode: str
-    ) -> list[str]:
-        """Fetch the post page HTML and extract images from embedded JSON.
-
-        Looks for edge_sidecar_to_children (GraphQL) or carousel_media
-        (API-style) JSON structures embedded in the page.
-        """
-        post_url = f"https://www.instagram.com/p/{shortcode}/"
-        logger.info("[Instagram] Trying post page for embedded JSON")
-
-        try:
-            resp = await client.get(post_url)
-            if resp.status_code != 200:
-                return []
-
-            page = resp.text
-            urls = self._extract_sidecar_urls(page)
-            if urls:
-                logger.info(f"[Instagram] Post page sidecar found {len(urls)} image(s)")
-            return urls
-
-        except Exception as e:
-            logger.debug(f"[Instagram] Post page extraction failed: {e}")
-            return []
-
-    async def _extract_embed_page_images(
-        self, client: httpx.AsyncClient, shortcode: str
-    ) -> list[str]:
-        """Fetch the embed page and extract post images from its JSON/HTML.
-
-        The embed page contains carousel data as JSON in <script> tags.
-        We extract only from structured data, not from loose CDN URLs,
-        to avoid grabbing profile pictures or unrelated images.
-        """
-        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-        logger.info("[Instagram] Trying embed page for post images")
-
-        try:
-            resp = await client.get(embed_url)
-            if resp.status_code != 200:
-                return []
-
-            page = resp.text
-
-            sidecar = self._extract_sidecar_urls(page)
-            if sidecar:
-                logger.info(f"[Instagram] Embed sidecar found {len(sidecar)} image(s)")
-                return sidecar
-
-            display_urls = self._extract_display_urls(page)
-            if display_urls:
-                logger.info(f"[Instagram] Embed display_url found {len(display_urls)} image(s)")
-                return display_urls
-
-            return []
-
-        except Exception as e:
-            logger.debug(f"[Instagram] Embed page extraction failed: {e}")
-            return []
-
-    # ── Structured JSON extraction helpers ─────────────────────────────
-
-    def _extract_image_urls_from_slides(self, slides: list[dict]) -> list[str]:
-        """Extract the best image URL from each carousel slide."""
-        urls: list[str] = []
-        for slide in slides:
-            candidates = slide.get("image_versions2", {}).get("candidates", [])
-            if candidates:
-                best = max(candidates, key=lambda c: c.get("width", 0) * c.get("height", 0))
-                url = best.get("url", "")
-                if url:
-                    urls.append(url)
-        return urls
-
-    def _extract_sidecar_urls(self, page: str) -> list[str]:
-        """Extract display_url from edge_sidecar_to_children or carousel_media in page HTML."""
-        urls: list[str] = []
-
-        # GraphQL format: edge_sidecar_to_children
-        for m in re.finditer(r'"edge_sidecar_to_children"\s*:\s*\{', page):
-            blob_str = self._extract_json_object(page, m.start())
-            if not blob_str:
-                continue
-            try:
-                key_prefix = '"edge_sidecar_to_children":'
-                json_str = blob_str[blob_str.index(key_prefix) + len(key_prefix):]
-                blob = json.loads(json_str)
-                for edge in blob.get("edges", []):
-                    node = edge.get("node", {})
-                    display = node.get("display_url", "")
-                    if display:
-                        urls.append(self._unescape_url(display))
-            except (json.JSONDecodeError, ValueError):
-                continue
-
-        if urls:
-            return urls
-
-        # API format: carousel_media
-        for m in re.finditer(r'"carousel_media"\s*:\s*\[', page):
-            arr_str = self._extract_json_array(page, m.start() + len('"carousel_media":'))
-            if not arr_str:
-                continue
-            try:
-                items = json.loads(arr_str)
-                urls = self._extract_image_urls_from_slides(items)
-            except (json.JSONDecodeError, ValueError):
-                continue
-
-        return urls
-
-    def _extract_display_urls(self, page: str) -> list[str]:
-        """Extract display_url values from page — only those inside shortcode_media or similar post blocks."""
-        urls: list[str] = []
-        seen: set[str] = set()
-
-        for m in re.finditer(r'"shortcode_media"\s*:\s*\{', page):
-            block_end = min(m.start() + 100000, len(page))
-            block = page[m.start():block_end]
-            for dm in re.finditer(r'"display_url"\s*:\s*"(https?://[^"]+)"', block):
-                raw = self._unescape_url(dm.group(1))
-                if raw not in seen:
-                    seen.add(raw)
-                    urls.append(raw)
-
-        if not urls:
-            for dm in re.finditer(r'"display_url"\s*:\s*"(https?://[^"]+)"', page):
-                raw = self._unescape_url(dm.group(1))
-                if raw not in seen:
-                    seen.add(raw)
-                    urls.append(raw)
-
-        return urls
-
-    # ── Image fetching ─────────────────────────────────────────────────
-
-    async def _fetch_images_to_result(
-        self,
-        client: httpx.AsyncClient,
-        image_urls: list[str],
-        original_url: str,
-    ) -> DownloadResult:
-        """Download images from URLs into BytesIO buffers and return a DownloadResult."""
-        buffers: list[io.BytesIO] = []
-        for i, img_url in enumerate(image_urls):
-            try:
-                resp = await client.get(img_url)
-                resp.raise_for_status()
-                buf = io.BytesIO(resp.content)
-                buf.seek(0)
-                buffers.append(buf)
-                logger.debug(
-                    f"[Instagram] Image {i+1}/{len(image_urls)}: "
-                    f"{len(resp.content)} bytes"
-                )
-            except Exception as e:
-                logger.warning(f"[Instagram] Failed image {i+1}: {e}")
-
-        if not buffers:
-            raise DownloadError(
-                "Failed to download any images",
-                platform=self.platform,
-            )
-
-        caption = await self._scrape_caption(client, original_url)
-        first = buffers[0]
-        first_size = first.getbuffer().nbytes
-        first.seek(0)
-
-        if len(buffers) == 1:
-            return DownloadResult(
-                buffer=first,
-                filename="instagram_image.jpg",
-                file_size=first_size,
-                media_type=MediaType.IMAGE,
-                caption=caption,
-            )
-
-        return DownloadResult(
-            buffer=first,
-            filename="instagram_image_1.jpg",
-            file_size=first_size,
-            media_type=MediaType.IMAGES,
-            caption=caption,
-            extra_buffers=buffers[1:],
-        )
-
-    async def _fetch_media_endpoint(
-        self,
-        client: httpx.AsyncClient,
-        shortcode: str,
-        original_url: str,
-    ) -> DownloadResult:
-        """Download single image via Instagram's /media/?size=l endpoint."""
-        media_url = f"https://www.instagram.com/p/{shortcode}/media/?size=l"
-        logger.info("[Instagram] Fetching image via /media/ endpoint (single image)")
-
-        resp = await client.get(media_url)
-        resp.raise_for_status()
-
-        content_type = resp.headers.get("content-type", "")
-        if "image" not in content_type:
-            raise DownloadError(
-                f"Expected image, got {content_type}",
-                platform=self.platform,
-            )
-
-        buffer = io.BytesIO(resp.content)
-        file_size = len(resp.content)
-        buffer.seek(0)
-
-        logger.info(f"[Instagram] Downloaded image: {file_size / 1024:.1f} KB")
-
-        caption = await self._scrape_caption(client, original_url)
-
-        return DownloadResult(
-            buffer=buffer,
-            filename="instagram_image.jpg",
-            file_size=file_size,
-            media_type=MediaType.IMAGE,
-            caption=caption,
-        )
-
-    async def _scrape_caption(self, client: httpx.AsyncClient, url: str) -> str | None:
-        """Try to get the post caption from page meta tags."""
-        try:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                match = re.search(
-                    r'<meta property="og:title" content="([^"]+)"', resp.text
-                )
-                if match:
-                    title = htmlmod.unescape(match.group(1)).strip()
-                    if title:
-                        return title
-        except Exception:
-            pass
-        return None
-
-    # ── Carousel download (yt-dlp path) ───────────────────────────────
-
     async def _download_carousel(self, url: str, info: dict) -> DownloadResult:
         """Download a carousel post (multiple images/videos) into memory."""
         entries = info.get("entries", [])
         if not entries:
-            raise DownloadError("Carousel has no entries", platform=self.platform)
+            raise DownloadError(
+                "Carousel has no entries", platform=self.platform
+            )
 
         logger.info(f"[Instagram] Downloading carousel with {len(entries)} items")
 
@@ -663,7 +274,7 @@ class InstagramDownloader(BaseDownloader):
                 is_image = ext in ("jpg", "jpeg", "png", "webp")
 
                 if is_image:
-                    img_url = self._get_best_image_url(entry)
+                    img_url = get_best_image_url(entry)
                     if img_url:
                         try:
                             resp = await client.get(img_url)
@@ -684,12 +295,16 @@ class InstagramDownloader(BaseDownloader):
 
                 entry_url = entry.get("webpage_url") or entry.get("url") or url
                 try:
-                    video_buf = await self._download_video_bytes(entry_url)
+                    video_buf = await download_video_bytes(
+                        entry_url, self._get_cookies_args
+                    )
                     buffers.append(video_buf)
                     media_types.append(MediaType.VIDEO)
                     logger.debug(f"[Instagram] Carousel item {i+1}: video")
                 except Exception as e:
-                    logger.warning(f"[Instagram] Failed carousel video {i+1}: {e}")
+                    logger.warning(
+                        f"[Instagram] Failed carousel video {i+1}: {e}"
+                    )
 
         if not buffers:
             raise DownloadError(
@@ -712,7 +327,9 @@ class InstagramDownloader(BaseDownloader):
         if len(buffers) == 1:
             return DownloadResult(
                 buffer=first,
-                filename="instagram_image.jpg" if all_images else "instagram_video.mp4",
+                filename="instagram_image.jpg"
+                if all_images
+                else "instagram_video.mp4",
                 file_size=first_size,
                 media_type=media_types[0],
                 caption=caption,
@@ -720,144 +337,11 @@ class InstagramDownloader(BaseDownloader):
 
         return DownloadResult(
             buffer=first,
-            filename="instagram_carousel_1.jpg" if all_images else "instagram_carousel_1",
+            filename="instagram_carousel_1.jpg"
+            if all_images
+            else "instagram_carousel_1",
             file_size=first_size,
             media_type=MediaType.IMAGES,
             caption=caption,
             extra_buffers=buffers[1:],
         )
-
-    async def _download_video_bytes(self, url: str) -> io.BytesIO:
-        """Download a single video entry into a BytesIO buffer."""
-        args = [
-            "yt-dlp",
-            "--no-warnings",
-            "--no-check-certificates",
-            "--format", "best[filesize<50M]/best",
-            "--output", "-",
-            "--quiet",
-        ]
-        args.extend(self._get_cookies_args(url))
-        args.append(url)
-
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(), timeout=120
-        )
-
-        if process.returncode != 0 or not stdout:
-            raise DownloadError(
-                "Video download failed for carousel item",
-                platform=self.platform,
-            )
-
-        buf = io.BytesIO(stdout)
-        buf.seek(0)
-        return buf
-
-    # ── Helpers ────────────────────────────────────────────────────────
-
-    def _extract_shortcode(self, url: str) -> str | None:
-        """Extract the post shortcode from an Instagram URL."""
-        match = re.search(r"instagram\.com/(?:p|reel|reels)/([A-Za-z0-9_-]+)", url)
-        return match.group(1) if match else None
-
-    async def _fetch_single_image(
-        self, image_url: str, info: dict
-    ) -> DownloadResult:
-        """Fetch a single image from a direct URL."""
-        logger.info("[Instagram] Downloading single image")
-
-        try:
-            async with httpx.AsyncClient(
-                timeout=30, follow_redirects=True, headers=_MOBILE_HEADERS
-            ) as client:
-                resp = await client.get(image_url)
-                resp.raise_for_status()
-                buffer = io.BytesIO(resp.content)
-                file_size = len(resp.content)
-                buffer.seek(0)
-        except Exception as e:
-            raise DownloadError(
-                f"Image download failed: {e}",
-                platform=self.platform,
-            )
-
-        caption = info.get("title") or info.get("description")
-        if caption == "NA":
-            caption = None
-
-        return DownloadResult(
-            buffer=buffer,
-            filename="instagram_image.jpg",
-            file_size=file_size,
-            media_type=MediaType.IMAGE,
-            caption=caption,
-        )
-
-    def _get_best_image_url(self, info: dict) -> str | None:
-        """Get the best quality image URL from metadata."""
-        if info.get("url") and info.get("ext") in ("jpg", "jpeg", "png", "webp"):
-            return info["url"]
-
-        image_formats = [
-            f for f in info.get("formats", [])
-            if f.get("ext") in ("jpg", "jpeg", "png", "webp")
-        ]
-        if image_formats:
-            best = max(
-                image_formats,
-                key=lambda f: f.get("width", 0) * f.get("height", 0),
-            )
-            return best.get("url")
-
-        thumbnails = info.get("thumbnails", [])
-        if thumbnails:
-            best = max(
-                thumbnails,
-                key=lambda t: t.get("width", 0) * t.get("height", 0),
-            )
-            return best.get("url")
-
-        return None
-
-    @staticmethod
-    def _unescape_url(raw: str) -> str:
-        return raw.replace("\\u0026", "&").replace("\\/", "/")
-
-    @staticmethod
-    def _extract_json_object(text: str, start: int) -> str | None:
-        """Extract a balanced {...} JSON object starting from a position in text."""
-        idx = text.find("{", start)
-        if idx == -1:
-            return None
-        depth = 0
-        for i in range(idx, min(idx + 100000, len(text))):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[idx:i + 1]
-        return None
-
-    @staticmethod
-    def _extract_json_array(text: str, start: int) -> str | None:
-        """Extract a balanced [...] JSON array starting from a position in text."""
-        idx = text.find("[", start)
-        if idx == -1:
-            return None
-        depth = 0
-        for i in range(idx, min(idx + 100000, len(text))):
-            if text[i] == "[":
-                depth += 1
-            elif text[i] == "]":
-                depth -= 1
-                if depth == 0:
-                    return text[idx:i + 1]
-        return None
