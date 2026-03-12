@@ -25,7 +25,7 @@ A Telegram bot that receives video and image links from **TikTok** and **Instagr
 | 3   | **Native Media Send** | Sends video as Telegram video (plays inline) or image as Telegram photo (displays inline) |
 | 4   | **Emoji Reactions**   | Bot reacts to messages with emoji (👍, ❤️, 🔥, etc.) to feel human-like                   |
 | 5   | **TikTok Support**    | Download TikTok videos (no watermark) and images                                          |
-| 6   | **Instagram Support** | Download Instagram Reels / Stories / Posts and images                                     |
+| 6   | **Instagram Support** | Download Instagram Reels / Posts (no cookies) and Stories (requires cookies)              |
 
 ### 🚀 Additional Features
 
@@ -80,11 +80,13 @@ graph TB
 
     subgraph Download Layer
         WORKER -->|TikTok| TT[TikTok Downloader]
-        WORKER -->|Instagram| IG[Instagram Downloader]
+        WORKER -->|Instagram URL| IG[Instagram Router]
+        IG -->|/stories/| IG_STORY[Story Downloader + cookies]
+        IG -->|/reel/ /p/| IG_POST[Post Downloader, no cookies]
     end
 
     subgraph In-Memory & Delivery
-        TT & IG -->|Stream to RAM| MEM[BytesIO Buffer]
+        TT & IG_STORY & IG_POST -->|Stream to RAM| MEM[BytesIO Buffer]
         MEM -->|Upload| BOT
         BOT -->|Send Video/Photo| TG
         MEM -->|Free| GC[Garbage Collected]
@@ -144,7 +146,11 @@ TG-Project/
 │   │   ├── __init__.py
 │   │   ├── base_downloader.py          # Abstract base class
 │   │   ├── tiktok_downloader.py        # TikTok-specific logic
-│   │   └── instagram_downloader.py     # Instagram-specific logic
+│   │   ├── instagram_downloader.py     # Routes Story vs Post
+│   │   ├── instagram_story_download.py  # Stories only — uses cookies
+│   │   ├── instagram_post_download.py  # Reels/Posts — no cookies
+│   │   ├── instagram_video_download.py # Shared video download logic
+│   │   └── instagram_image_download.py # Shared image download logic
 │   ├── queue/
 │   │   ├── __init__.py
 │   │   ├── job_producer.py             # Creates download jobs
@@ -223,7 +229,7 @@ sequenceDiagram
 The bot will detect URLs using regex patterns for each supported platform. Both **video** and **image** content use the same URL patterns — the downloader determines media type at fetch time:
 
 - **TikTok:** `/@user/video/123` — can be video or image slideshow
-- **Instagram:** `/p/ABC123` — can be single image, carousel, or video; `/reel/` — video; `/stories/` — video or image
+- **Instagram:** `/p/ABC123` — single image, carousel, or video (no cookies); `/reel/` — video (no cookies); `/stories/` — video or image (**requires cookies**)
 
 ```python
 import re
@@ -432,6 +438,10 @@ ENABLE_AUDIO_EXTRACT=false
 
 # Supported Platforms
 SUPPORTED_PLATFORMS=tiktok,instagram
+
+# Instagram (optional — only for Stories)
+INSTAGRAM_COOKIES_FILE=path/to/instagram_cookies.txt
+# Or for deploy: INSTAGRAM_COOKIES_BASE64=<base64 of cookies.txt>
 ```
 
 ---
@@ -449,16 +459,17 @@ SUPPORTED_PLATFORMS=tiktok,instagram
 
 ## 17. Key Design Decisions
 
-| Decision    | Choice                             | Rationale                                                              |
-| ----------- | ---------------------------------- | ---------------------------------------------------------------------- |
-| Language    | Python 3.11+                       | Rich bot ecosystem, async support, easy to maintain and extend         |
-| Bot library | `python-telegram-bot` or `aiogram` | Mature, async-first, large community, excellent documentation          |
-| Downloader  | yt-dlp (Python library)            | Supports 1000+ sites, actively maintained, native Python API available |
-| Queue       | Start without → add Celery later   | Keep MVP simple, scale when needed                                     |
-| Storage     | **No DB — RAM only** (`BytesIO`)   | Fully stateless, zero config, no disk I/O, instant cleanup             |
-| Deployment  | Docker on VPS                      | Full control, cheap, no serverless cold starts                         |
-| Config      | `pydantic-settings`                | Type-safe env var management with validation                           |
-| Platforms   | TikTok + Instagram only            | Focused scope, deliver quality over quantity                           |
+| Decision    | Choice                               | Rationale                                                              |
+| ----------- | ------------------------------------ | ---------------------------------------------------------------------- |
+| Language    | Python 3.11+                         | Rich bot ecosystem, async support, easy to maintain and extend         |
+| Bot library | `python-telegram-bot` or `aiogram`   | Mature, async-first, large community, excellent documentation          |
+| Downloader  | yt-dlp (Python library)              | Supports 1000+ sites, actively maintained, native Python API available |
+| Queue       | Start without → add Celery later     | Keep MVP simple, scale when needed                                     |
+| Storage     | **No DB — RAM only** (`BytesIO`)     | Fully stateless, zero config, no disk I/O, instant cleanup             |
+| Deployment  | Docker on VPS                        | Full control, cheap, no serverless cold starts                         |
+| Config      | `pydantic-settings`                  | Type-safe env var management with validation                           |
+| Platforms   | TikTok + Instagram only              | Focused scope, deliver quality over quantity                           |
+| Instagram   | Story (cookies) vs Post (no cookies) | Stories require login; Reels/Posts work without cookies — split logic  |
 
 ---
 

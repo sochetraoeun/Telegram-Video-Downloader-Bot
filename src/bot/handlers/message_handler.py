@@ -102,10 +102,13 @@ async def _process_media(
         elif "stories" in e.message.lower() and not e.retryable and "require login" in e.message.lower():
             error_type = "stories_unsupported"
 
-        # Use the actual error message for story/session errors (more helpful)
+        # Use the actual error message for story/session/cookie errors (more helpful)
         if not e.retryable and any(
             x in e.message.lower()
-            for x in ("story", "expired", "session", "unreachable", "private")
+            for x in (
+                "story", "expired", "session", "unreachable", "private",
+                "login required", "cookies", "rate-limit", "instagram requires",
+            )
         ):
             msg = f"❌ {e.message}"
         else:

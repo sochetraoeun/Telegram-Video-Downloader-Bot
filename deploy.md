@@ -149,12 +149,22 @@ If you see that, your bot is live.
 
 In Railway → Variables, you can add (all optional):
 
-| Variable              | Value               | What it does                  |
-| --------------------- | ------------------- | ----------------------------- |
-| `BOT_USERNAME`        | `your_bot_username` | Your bot's @username          |
-| `MAX_FILE_SIZE_MB`    | `50`                | Max video size (default 50)   |
-| `RATE_LIMIT_PER_MIN`  | `10`                | Downloads per user per minute |
-| `SUPPORTED_PLATFORMS` | `tiktok,instagram`  | Platforms to support          |
+| Variable                    | Value               | What it does                  |
+| --------------------------- | ------------------- | ----------------------------- |
+| `BOT_USERNAME`              | `your_bot_username` | Your bot's @username          |
+| `MAX_FILE_SIZE_MB`          | `50`                | Max video size (default 50)   |
+| `RATE_LIMIT_PER_MIN`       | `10`                | Downloads per user per minute |
+| `SUPPORTED_PLATFORMS`       | `tiktok,instagram`  | Platforms to support          |
+| `INSTAGRAM_COOKIES_BASE64`  | *(see below)*       | **Only for Stories** — Reels/Posts work without cookies |
+
+### Instagram cookies (only for Stories)
+
+Reels and Posts work without cookies. **Stories** require login — add cookies only if you want Story support.
+
+1. Log into Instagram in your browser (Chrome or Firefox).
+2. Export cookies using [Get cookies.txt](https://chromewebstore.google.com/detail/get-cookiestxt/bgaddhkoddajcdgocldbbfleckgcbcid) (Chrome) or [cookies.txt](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/) (Firefox). Save as `instagram_cookies.txt`.
+3. Encode: `base64 -i instagram_cookies.txt | tr -d '\n'`
+4. In Railway → Variables: `INSTAGRAM_COOKIES_BASE64` = the base64 string.
 
 ---
 
@@ -163,6 +173,7 @@ In Railway → Variables, you can add (all optional):
 | Problem                     | What to try                                                     |
 | --------------------------- | --------------------------------------------------------------- |
 | `bot_token` Field required  | Add `BOT_TOKEN` in Railway → Variables (Step 4). Must be set.   |
+| **Instagram Stories fail**   | Add `INSTAGRAM_COOKIES_BASE64` (see Part 3). Stories require cookies; Reels/Posts do not. |
 | Build fails                 | Check **Logs** for the error. Often: missing file or wrong path |
 | `yt-dlp: command not found` | Use the Dockerfile option instead (see below)                   |
 | `ffmpeg: command not found` | Same — use Dockerfile                                           |
@@ -173,7 +184,7 @@ In Railway → Variables, you can add (all optional):
 
 ## Alternative: Use Dockerfile Instead
 
-If Nixpacks doesn't work, create a `Dockerfile` in your project root:
+If Nixpacks doesn't work, create a `Dockerfile` inyour project root:
 
 ```dockerfile
 FROM python:3.11-slim
