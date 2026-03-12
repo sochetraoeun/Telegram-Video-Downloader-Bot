@@ -146,11 +146,12 @@ TG-Project/
 │   │   ├── __init__.py
 │   │   ├── base_downloader.py          # Abstract base class
 │   │   ├── tiktok_downloader.py        # TikTok-specific logic
-│   │   ├── instagram_downloader.py     # Routes Story vs Post
-│   │   ├── instagram_story_download.py  # Stories only — uses cookies
-│   │   ├── instagram_post_download.py  # Reels/Posts — no cookies
-│   │   ├── instagram_video_download.py # Shared video download logic
-│   │   └── instagram_image_download.py # Shared image download logic
+│   │   ├── instagram_downloader.py        # Routes Story, Post image, Post video
+│   │   ├── instagram_story_download.py    # Stories only — uses cookies
+│   │   ├── instagram_post_image_download.py  # Post images only
+│   │   ├── instagram_post_video_download.py  # Post videos (Reels) only
+│   │   ├── instagram_video_download.py    # Shared video download logic
+│   │   └── instagram_image_download.py    # Shared image download logic
 │   ├── queue/
 │   │   ├── __init__.py
 │   │   ├── job_producer.py             # Creates download jobs
