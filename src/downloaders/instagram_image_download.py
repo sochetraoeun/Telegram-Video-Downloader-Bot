@@ -27,10 +27,26 @@ def extract_shortcode(url: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _is_image_url(url: str) -> bool:
+    """Check if URL looks like an image (for playlist entries without ext)."""
+    if not url:
+        return False
+    lower = url.lower()
+    return (
+        ".jpg" in lower or ".jpeg" in lower or ".png" in lower or ".webp" in lower
+        or "cdninstagram" in lower or "fbcdn" in lower
+    )
+
+
 def get_best_image_url(info: dict) -> str | None:
     """Get the best quality image URL from metadata."""
     if info.get("url") and info.get("ext") in ("jpg", "jpeg", "png", "webp"):
         return info["url"]
+
+    # Playlist entries may have url without ext — check if URL looks like image
+    url = info.get("url")
+    if url and _is_image_url(url):
+        return url
 
     image_formats = [
         f for f in info.get("formats", [])
@@ -50,6 +66,11 @@ def get_best_image_url(info: dict) -> str | None:
             key=lambda t: t.get("width", 0) * t.get("height", 0),
         )
         return best.get("url")
+
+    # Fallback: thumbnail field (common in playlist entries)
+    thumb = info.get("thumbnail")
+    if thumb and _is_image_url(thumb):
+        return thumb
 
     return None
 
@@ -94,14 +115,21 @@ def _extract_image_urls_from_slides(slides: list[dict]) -> list[str]:
     """Extract the best image URL from each carousel slide."""
     urls: list[str] = []
     for slide in slides:
+        # Skip video slides (media_type 2)
+        if slide.get("media_type") == 2:
+            continue
         candidates = slide.get("image_versions2", {}).get("candidates", [])
+        if not candidates:
+            candidates = slide.get("display_resources", [])
         if candidates:
             best = max(
                 candidates, key=lambda c: c.get("width", 0) * c.get("height", 0)
             )
             url = best.get("url", "")
             if url:
-                urls.append(url)
+                urls.append(_unescape_url(url))
+        elif slide.get("display_url"):
+            urls.append(_unescape_url(slide["display_url"]))
     return urls
 
 
@@ -142,25 +170,16 @@ def _extract_sidecar_urls(page: str) -> list[str]:
 
 
 def _extract_display_urls(page: str) -> list[str]:
-    """Extract display_url values from page."""
+    """Extract ALL display_url values from page (for carousels, gets every image)."""
     urls: list[str] = []
     seen: set[str] = set()
 
-    for m in re.finditer(r'"shortcode_media"\s*:\s*\{', page):
-        block_end = min(m.start() + 100000, len(page))
-        block = page[m.start() : block_end]
-        for dm in re.finditer(r'"display_url"\s*:\s*"(https?://[^"]+)"', block):
-            raw = _unescape_url(dm.group(1))
-            if raw not in seen:
-                seen.add(raw)
-                urls.append(raw)
-
-    if not urls:
-        for dm in re.finditer(r'"display_url"\s*:\s*"(https?://[^"]+)"', page):
-            raw = _unescape_url(dm.group(1))
-            if raw not in seen:
-                seen.add(raw)
-                urls.append(raw)
+    # Full-page search — ensures we get all carousel images
+    for dm in re.finditer(r'"display_url"\s*:\s*"(https?://[^"]+)"', page):
+        raw = _unescape_url(dm.group(1))
+        if raw not in seen:
+            seen.add(raw)
+            urls.append(raw)
 
     return urls
 
@@ -220,13 +239,12 @@ async def download_post_via_http(url: str) -> DownloadResult:
         async with httpx.AsyncClient(
             timeout=30, follow_redirects=True, headers=_MOBILE_HEADERS
         ) as client:
-            image_urls = await _fetch_api_images(client, shortcode)
+            # Try all extraction methods and merge — use the one with most images
+            api_urls = await _fetch_api_images(client, shortcode)
+            post_urls = await _extract_post_page_images(client, shortcode)
+            embed_urls = await _extract_embed_page_images(client, shortcode)
 
-            if not image_urls:
-                image_urls = await _extract_post_page_images(client, shortcode)
-
-            if not image_urls:
-                image_urls = await _extract_embed_page_images(client, shortcode)
+            image_urls = _merge_image_urls(api_urls, post_urls, embed_urls)
 
             if image_urls:
                 logger.info(
@@ -307,14 +325,29 @@ async def _extract_post_page_images(
             return []
 
         page = resp.text
-        urls = _extract_sidecar_urls(page)
-        if urls:
-            logger.info(f"[Instagram] Post page sidecar found {len(urls)} image(s)")
-        return urls
+        # Merge sidecar + display_urls to get all carousel images
+        sidecar = _extract_sidecar_urls(page)
+        display_urls = _extract_display_urls(page)
+        merged = _merge_image_urls(sidecar, display_urls)
+        if merged:
+            logger.info(f"[Instagram] Post page found {len(merged)} image(s)")
+        return merged
 
     except Exception as e:
         logger.debug(f"[Instagram] Post page extraction failed: {e}")
         return []
+
+
+def _merge_image_urls(*url_lists: list[str]) -> list[str]:
+    """Merge URL lists, dedupe, preserve order (for carousel — get all images)."""
+    seen: set[str] = set()
+    merged: list[str] = []
+    for urls in url_lists:
+        for u in urls:
+            if u and u not in seen:
+                seen.add(u)
+                merged.append(u)
+    return merged
 
 
 async def _extract_embed_page_images(
@@ -331,17 +364,14 @@ async def _extract_embed_page_images(
 
         page = resp.text
 
+        # Try both methods and merge — ensures we get all carousel images
         sidecar = _extract_sidecar_urls(page)
-        if sidecar:
-            logger.info(f"[Instagram] Embed sidecar found {len(sidecar)} image(s)")
-            return sidecar
-
         display_urls = _extract_display_urls(page)
-        if display_urls:
-            logger.info(
-                f"[Instagram] Embed display_url found {len(display_urls)} image(s)"
-            )
-            return display_urls
+        merged = _merge_image_urls(sidecar, display_urls)
+
+        if merged:
+            logger.info(f"[Instagram] Embed found {len(merged)} image(s)")
+            return merged
 
         return []
 
