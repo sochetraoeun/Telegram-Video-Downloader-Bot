@@ -80,6 +80,8 @@ async def _process_media(
             await _send_photo(context, chat_id, result, status_msg)
         elif result.media_type == MediaType.IMAGES:
             await _send_media_group(context, chat_id, result, status_msg)
+        elif result.media_type == MediaType.AUDIO:
+            await _send_audio(context, chat_id, result, status_msg)
 
         await react(update, "complete")
 
@@ -221,3 +223,24 @@ async def _send_media_group(context, chat_id: int, result, status_msg) -> None:
 
     if count > 10:
         logger.warning(f"Carousel had {count} items, only sent first 10 (Telegram limit)")
+
+
+async def _send_audio(context, chat_id: int, result, status_msg) -> None:
+    """Send an audio file as native Telegram audio."""
+    try:
+        await status_msg.edit_text(
+            f"📤 Uploading **{format_file_size(result.file_size)}** audio...",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+    await context.bot.send_audio(
+        chat_id=chat_id,
+        audio=result.buffer,
+        filename=result.filename,
+        caption=format_success_message(result.media_type, result.caption),
+        parse_mode="Markdown",
+        duration=result.duration,
+        title=result.caption,
+    )

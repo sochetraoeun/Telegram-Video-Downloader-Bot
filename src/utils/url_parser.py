@@ -10,6 +10,10 @@ PLATFORM_PATTERNS: dict[str, re.Pattern] = {
     "instagram": re.compile(
         r"https?://(www\.)?instagram\.com/(reel|p|stories|reels)/.+", re.IGNORECASE
     ),
+    "youtube": re.compile(
+        r"https?://(www\.|m\.)?(youtube\.com/(watch\?v=|shorts/|embed/|live/)[\w-]+|youtu\.be/[\w-]+)",
+        re.IGNORECASE,
+    ),
 }
 
 

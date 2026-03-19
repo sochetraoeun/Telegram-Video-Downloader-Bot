@@ -14,7 +14,7 @@ def _escape_markdown(text: str) -> str:
 
 def format_downloading_message(platform: str, url: str) -> str:
     """Format the 'downloading' status message."""
-    platform_emoji = {"tiktok": "🎵", "instagram": "📸"}
+    platform_emoji = {"tiktok": "🎵", "instagram": "📸", "youtube": "▶️"}
     emoji = platform_emoji.get(platform, "🎬")
     return f"{emoji} Downloading from **{platform.title()}**...\n⏳ Please wait..."
 
@@ -25,6 +25,7 @@ def format_success_message(media_type: MediaType, caption: str | None = None) ->
         MediaType.VIDEO: "video",
         MediaType.IMAGE: "image",
         MediaType.IMAGES: "images",
+        MediaType.AUDIO: "audio",
     }
     label = labels.get(media_type, "media")
     msg = f"✅ Downloaded {label}"
@@ -37,8 +38,8 @@ def format_success_message(media_type: MediaType, caption: str | None = None) ->
 def format_error_message(error_type: str) -> str:
     """Format error messages based on error type."""
     messages = {
-        "invalid_url": "❌ That doesn't look like a valid URL. Please send a TikTok or Instagram link.",
-        "unsupported_platform": "🚧 Only **TikTok** and **Instagram** links are supported right now.",
+        "invalid_url": "❌ That doesn't look like a valid URL. Please send a TikTok, Instagram, or YouTube link.",
+        "unsupported_platform": "🚧 Only **TikTok**, **Instagram**, and **YouTube** links are supported right now.",
         "stories_unsupported": "🔒 Instagram Stories require login and can't be downloaded. Try sending a Reel or Post link instead.",
         "download_failed": "😔 Download failed. The content might be private or unavailable. Please try again.",
         "too_large": "📏 Video is too large (>50MB) even after compression. Try a shorter video.",

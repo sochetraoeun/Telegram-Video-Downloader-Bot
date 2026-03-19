@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     enable_audio_extract: bool = Field(default=False)
 
     # Supported platforms
-    supported_platforms: str = Field(default="tiktok,instagram")
+    supported_platforms: str = Field(default="tiktok,instagram,youtube")
 
     # Instagram (optional — for Stories support)
     instagram_cookies_file: str | None = Field(

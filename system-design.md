@@ -4,13 +4,13 @@
 > **Date:** 2026-03-07  
 > **Status:** Draft / Awaiting Review  
 > **Tech Stack:** Python  
-> **Supported Platforms:** TikTok, Instagram
+> **Supported Platforms:** TikTok, Instagram, YouTube
 
 ---
 
 ## 1. Overview
 
-A Telegram bot that receives video and image links from **TikTok** and **Instagram**, downloads the media, and sends it back to the user **as native Telegram media** (video plays inline, images display inline) — as if a real person shared it. The bot also supports emoji reactions and provides a smooth, human-like messaging experience.
+A Telegram bot that receives video and image links from **TikTok**, **Instagram**, and **YouTube**, downloads the media, and sends it back to the user **as native Telegram media** (video plays inline, images display inline) — as if a real person shared it. The bot also supports emoji reactions and provides a smooth, human-like messaging experience.
 
 ---
 
@@ -20,30 +20,33 @@ A Telegram bot that receives video and image links from **TikTok** and **Instagr
 
 | #   | Feature               | Description                                                                               |
 | --- | --------------------- | ----------------------------------------------------------------------------------------- |
-| 1   | **Link Detection**    | Bot detects video and image links from TikTok and Instagram in any message                |
+| 1   | **Link Detection**    | Bot detects video and image links from TikTok, Instagram, and YouTube in any message      |
 | 2   | **Media Download**    | Downloads the video or image from the detected link                                       |
 | 3   | **Native Media Send** | Sends video as Telegram video (plays inline) or image as Telegram photo (displays inline) |
 | 4   | **Emoji Reactions**   | Bot reacts to messages with emoji (👍, ❤️, 🔥, etc.) to feel human-like                   |
 | 5   | **TikTok Support**    | Download TikTok videos (no watermark) and images                                          |
 | 6   | **Instagram Support** | Download Instagram Reels / Posts (no cookies) and Stories (requires cookies)              |
+| 7   | **YouTube Support**   | Download YouTube videos and Shorts in best quality; extract MP3 audio via `/audio`        |
 
 ### 🚀 Additional Features
 
 | #   | Feature                      | Description                                                          |
 | --- | ---------------------------- | -------------------------------------------------------------------- |
-| 7   | **Auto-Caption**             | Optionally include the original post caption as a message            |
-| 8   | **Progress Indicator**       | Show "⏳ Downloading..." → "📤 Uploading..." status messages         |
-| 9   | **Thumbnail Preview**        | Send video thumbnail before full video (for large files)             |
-| 10  | **Multiple Links**           | Handle multiple links in a single message                            |
-| 11  | **Group Chat Support**       | Bot works in group chats, not just DMs                               |
-| 12  | **Rate Limiting**            | Prevent spam / abuse per user (e.g., 10 videos per minute)           |
-| 13  | **Error Handling**           | Friendly error messages when link is invalid or video is unavailable |
-| 14  | **File Size Handling**       | Telegram limit is 50MB for bots — compress or split large videos     |
-| 15  | **Audio Extraction**         | `/audio` command to extract audio only (MP3) from a video link       |
-| 16  | **Inline Mode**              | Use bot inline in any chat: `@botname <link>` → sends video          |
-| 17  | **Watermark Removal**        | Remove TikTok watermark automatically                                |
-| 18  | **TikTok Image Download**    | Download TikTok image posts (e.g., photo slideshows)                 |
-| 19  | **Instagram Image Download** | Download Instagram image posts (single or carousel)                  |
+| 8   | **Auto-Caption**             | Optionally include the original post caption as a message            |
+| 9   | **Progress Indicator**       | Show "⏳ Downloading..." → "📤 Uploading..." status messages         |
+| 10  | **Thumbnail Preview**        | Send video thumbnail before full video (for large files)             |
+| 11  | **Multiple Links**           | Handle multiple links in a single message                            |
+| 12  | **Group Chat Support**       | Bot works in group chats, not just DMs                               |
+| 13  | **Rate Limiting**            | Prevent spam / abuse per user (e.g., 10 videos per minute)           |
+| 14  | **Error Handling**           | Friendly error messages when link is invalid or video is unavailable |
+| 15  | **File Size Handling**       | Telegram limit is 50MB for bots — compress or split large videos     |
+| 16  | **Audio Extraction**         | `/audio <YouTube link>` to extract audio only (MP3)                  |
+| 17  | **Inline Mode**              | Use bot inline in any chat: `@botname <link>` → sends video          |
+| 18  | **Watermark Removal**        | Remove TikTok watermark automatically                                |
+| 19  | **TikTok Image Download**    | Download TikTok image posts (e.g., photo slideshows)                 |
+| 20  | **Instagram Image Download** | Download Instagram image posts (single or carousel)                  |
+| 21  | **YouTube Shorts Download**  | Download YouTube Shorts (short-form vertical videos)                 |
+| 22  | **YouTube MP3 Extract**      | Extract audio from YouTube videos and send as MP3 via `/audio`       |
 
 ---
 
@@ -81,12 +84,16 @@ graph TB
     subgraph Download Layer
         WORKER -->|TikTok| TT[TikTok Downloader]
         WORKER -->|Instagram URL| IG[Instagram Router]
+        WORKER -->|YouTube URL| YT[YouTube Router]
         IG -->|/stories/| IG_STORY[Story Downloader + cookies]
         IG -->|/reel/ /p/| IG_POST[Post Downloader, no cookies]
+        YT -->|/watch?v=| YT_VID[Video Downloader]
+        YT -->|/shorts/| YT_SHORT[Shorts Downloader]
+        YT -->|/audio cmd| YT_AUDIO[Audio Extractor → MP3]
     end
 
     subgraph In-Memory & Delivery
-        TT & IG_STORY & IG_POST -->|Stream to RAM| MEM[BytesIO Buffer]
+        TT & IG_STORY & IG_POST & YT_VID & YT_SHORT & YT_AUDIO -->|Stream to RAM| MEM[BytesIO Buffer]
         MEM -->|Upload| BOT
         BOT -->|Send Video/Photo| TG
         MEM -->|Free| GC[Garbage Collected]
@@ -144,14 +151,20 @@ TG-Project/
 │   │       └── reactor.py             # Emoji reaction logic
 │   ├── downloaders/
 │   │   ├── __init__.py
-│   │   ├── base_downloader.py          # Abstract base class
-│   │   ├── tiktok_downloader.py        # TikTok-specific logic
+│   │   ├── base_downloader.py          # Abstract base class + MediaType (VIDEO, IMAGE, IMAGES, AUDIO)
+│   │   ├── tiktok_downloader.py        # TikTok orchestrator
+│   │   ├── tiktok_video_download.py    # TikTok video download
+│   │   ├── tiktok_image_download.py    # TikTok image slideshow download
 │   │   ├── instagram_downloader.py        # Routes Story, Post image, Post video
 │   │   ├── instagram_story_download.py    # Stories only — uses cookies
 │   │   ├── instagram_post_image_download.py  # Post images only
 │   │   ├── instagram_post_video_download.py  # Post videos (Reels) only
 │   │   ├── instagram_video_download.py    # Shared video download logic
-│   │   └── instagram_image_download.py    # Shared image download logic
+│   │   ├── instagram_image_download.py    # Shared image download logic
+│   │   ├── youtube_downloader.py          # YouTube orchestrator — routes video/Shorts/audio
+│   │   ├── youtube_video_download.py      # Regular YouTube video download
+│   │   ├── youtube_shorts_download.py     # YouTube Shorts download
+│   │   └── youtube_audio_download.py      # YouTube audio extraction → MP3
 │   ├── queue/
 │   │   ├── __init__.py
 │   │   ├── job_producer.py             # Creates download jobs
@@ -198,16 +211,16 @@ sequenceDiagram
 
     U->>T: Sends message with video link
     T->>B: Webhook delivers update
-    B->>B: Parse URL, detect platform (TikTok / Instagram)
+    B->>B: Parse URL, detect platform (TikTok / Instagram / YouTube)
     B->>T: React with ⏳ emoji
     B->>T: Send "Downloading..." status
     B->>Q: Create download job
     Q->>W: Worker picks up job
-    W->>D: Download media (video/image) into BytesIO (RAM)
+    W->>D: Download media (video/image/audio) into BytesIO (RAM)
     D-->>W: Media bytes in memory
     W->>W: Compress video in-memory if > 50MB (ffmpeg)
     W->>B: Job complete, BytesIO buffer
-    B->>T: Upload & send as native video or photo
+    B->>T: Upload & send as native video, photo, or audio
     B->>T: React with ✅ emoji
     B->>B: Free BytesIO buffer (garbage collected)
 ```
@@ -216,12 +229,12 @@ sequenceDiagram
 
 ## 8. Bot Commands
 
-| Command         | Description                             |
-| --------------- | --------------------------------------- |
-| `/start`        | Welcome message + instructions          |
-| `/help`         | List all commands & supported platforms |
-| `/audio <link>` | Extract audio only from video           |
-| `/cancel`       | Cancel current download                 |
+| Command                 | Description                                      |
+| ----------------------- | ------------------------------------------------ |
+| `/start`                | Welcome message + instructions                   |
+| `/help`                 | List all commands & supported platforms          |
+| `/audio <YouTube link>` | Extract audio from YouTube video and send as MP3 |
+| `/cancel`               | Cancel current download                          |
 
 ---
 
@@ -231,17 +244,22 @@ The bot will detect URLs using regex patterns for each supported platform. Both 
 
 - **TikTok:** `/@user/video/123` — can be video or image slideshow
 - **Instagram:** `/p/ABC123` — single image, carousel, or video (no cookies); `/reel/` — video (no cookies); `/stories/` — video or image (**requires cookies**)
+- **YouTube:** `/watch?v=...` — regular videos; `/shorts/...` — Shorts; `youtu.be/...` — short links; `/embed/...` and `/live/...` — embedded and live links
 
 ```python
 import re
 
 PLATFORM_PATTERNS: dict[str, re.Pattern] = {
     "tiktok": re.compile(
-        r"https?://(www\.|vm\.)?tiktok\.com/.+", re.IGNORECASE
+        r"https?://(www\.|vm\.|vt\.)?tiktok\.com/.+", re.IGNORECASE
     ),
     "instagram": re.compile(
-        r"https?://(www\.)?instagram\.com/(reel|p|stories)/.+", re.IGNORECASE
-    ),  # /p/ = posts (video or image/carousel)
+        r"https?://(www\.)?instagram\.com/(reel|p|stories|reels)/.+", re.IGNORECASE
+    ),
+    "youtube": re.compile(
+        r"https?://(www\.|m\.)?(youtube\.com/(watch\?v=|shorts/|embed/|live/)[\w-]+|youtu\.be/[\w-]+)",
+        re.IGNORECASE,
+    ),
 }
 
 
@@ -277,7 +295,7 @@ flowchart TD
     A[Link Received] --> B{Valid URL?}
     B -->|No| C[Reply: Invalid link ❌]
     B -->|Yes| D{Platform supported?}
-    D -->|No| E["Reply: Only TikTok & Instagram (video/image) are supported 🚧"]
+    D -->|No| E["Reply: Only TikTok, Instagram & YouTube are supported 🚧"]
     D -->|Yes| F[Start Download]
     F --> G{Download success?}
     G -->|No| H{Retry count < 3?}
@@ -367,15 +385,15 @@ def is_rate_limited(user_id: int, max_per_min: int = 10) -> bool:
 
 ## 13. Security Considerations
 
-| Risk                   | Mitigation                                                        |
-| ---------------------- | ----------------------------------------------------------------- |
-| **Malicious URLs**     | Validate URLs against whitelist (only TikTok & Instagram domains) |
-| **DDoS / Spam**        | In-memory rate limiting per user (10 req/min default)             |
-| **Large file abuse**   | Max file size cap (50MB) + in-memory compression                  |
-| **Bot token exposure** | Store in `.env`, never commit                                     |
-| **Memory exhaustion**  | Cap concurrent downloads + per-buffer size limit                  |
-| **Code injection**     | Sanitize all user input before passing to yt-dlp                  |
-| **Private content**    | Only download public / accessible content                         |
+| Risk                   | Mitigation                                                                 |
+| ---------------------- | -------------------------------------------------------------------------- |
+| **Malicious URLs**     | Validate URLs against whitelist (only TikTok, Instagram & YouTube domains) |
+| **DDoS / Spam**        | In-memory rate limiting per user (10 req/min default)                      |
+| **Large file abuse**   | Max file size cap (50MB) + in-memory compression                           |
+| **Bot token exposure** | Store in `.env`, never commit                                              |
+| **Memory exhaustion**  | Cap concurrent downloads + per-buffer size limit                           |
+| **Code injection**     | Sanitize all user input before passing to yt-dlp                           |
+| **Private content**    | Only download public / accessible content                                  |
 
 ---
 
@@ -384,9 +402,10 @@ def is_rate_limited(user_id: int, max_per_min: int = 10) -> bool:
 ### Phase 1 — MVP (Week 1-2)
 
 - [ ] Bot framework setup (`python-telegram-bot` or `aiogram`)
-- [ ] URL detection & parsing (TikTok + Instagram only)
+- [ ] URL detection & parsing (TikTok + Instagram + YouTube)
 - [ ] TikTok downloader (yt-dlp → BytesIO) — video + image
 - [ ] Instagram downloader (yt-dlp → BytesIO) — video + image
+- [ ] YouTube downloader (yt-dlp → BytesIO) — video + Shorts
 - [ ] In-memory video pipeline (download → RAM → send → free)
 - [ ] Native video sending
 - [ ] Basic emoji reactions
@@ -399,7 +418,7 @@ def is_rate_limited(user_id: int, max_per_min: int = 10) -> bool:
 - [ ] In-memory rate limiting (dict + TTL)
 - [ ] Error handling with retries
 - [ ] Auto-caption from original post
-- [ ] Audio extraction (`/audio` command)
+- [ ] Audio extraction (`/audio` command — YouTube MP3)
 - [ ] In-memory compression pipeline (ffmpeg)
 
 ### Phase 3 — Scale (Week 5-8)
@@ -438,7 +457,7 @@ ENABLE_INLINE_MODE=false
 ENABLE_AUDIO_EXTRACT=false
 
 # Supported Platforms
-SUPPORTED_PLATFORMS=tiktok,instagram
+SUPPORTED_PLATFORMS=tiktok,instagram,youtube
 
 # Instagram (optional — only for Stories)
 INSTAGRAM_COOKIES_FILE=path/to/instagram_cookies.txt
@@ -469,7 +488,7 @@ INSTAGRAM_COOKIES_FILE=path/to/instagram_cookies.txt
 | Storage     | **No DB — RAM only** (`BytesIO`)     | Fully stateless, zero config, no disk I/O, instant cleanup             |
 | Deployment  | Docker on VPS                        | Full control, cheap, no serverless cold starts                         |
 | Config      | `pydantic-settings`                  | Type-safe env var management with validation                           |
-| Platforms   | TikTok + Instagram only              | Focused scope, deliver quality over quantity                           |
+| Platforms   | TikTok + Instagram + YouTube         | Three most-requested platforms, all supported by yt-dlp                |
 | Instagram   | Story (cookies) vs Post (no cookies) | Stories require login; Reels/Posts work without cookies — split logic  |
 
 ---

@@ -12,6 +12,7 @@ class MediaType(Enum):
     VIDEO = "video"
     IMAGE = "image"
     IMAGES = "images"
+    AUDIO = "audio"
 
 
 @dataclass

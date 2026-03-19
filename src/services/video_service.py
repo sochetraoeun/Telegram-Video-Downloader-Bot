@@ -8,6 +8,7 @@ from src.downloaders.base_downloader import (
 )
 from src.downloaders.tiktok_downloader import TikTokDownloader
 from src.downloaders.instagram_downloader import InstagramDownloader
+from src.downloaders.youtube_downloader import YouTubeDownloader
 from src.services.compress_service import compress_video
 from src.config.settings import settings
 
@@ -16,6 +17,7 @@ TELEGRAM_MAX_PHOTO_SIZE = 10 * 1024 * 1024  # 10MB
 _downloaders: dict[str, BaseDownloader] = {
     "tiktok": TikTokDownloader(),
     "instagram": InstagramDownloader(),
+    "youtube": YouTubeDownloader(),
 }
 
 
