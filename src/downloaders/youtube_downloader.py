@@ -70,6 +70,7 @@ class YouTubeDownloader(BaseDownloader):
                 "yt-dlp",
                 "--no-warnings",
                 "--no-check-certificates",
+                "--no-playlist",
                 "--dump-json",
                 "--quiet",
                 *cookie_args,
@@ -82,7 +83,7 @@ class YouTubeDownloader(BaseDownloader):
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=30
+                process.communicate(), timeout=60
             )
 
             if process.returncode != 0:
@@ -145,7 +146,7 @@ class YouTubeDownloader(BaseDownloader):
             )
         except asyncio.TimeoutError:
             raise DownloadError(
-                "Info extraction timed out (>30s)",
+                "Info extraction timed out (>60s)",
                 platform=self.platform,
             )
         except DownloadError:

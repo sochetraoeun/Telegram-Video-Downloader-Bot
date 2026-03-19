@@ -30,6 +30,7 @@ async def download_video(
             "yt-dlp",
             "--no-warnings",
             "--no-check-certificates",
+            "--no-playlist",
             "--format",
             "bestvideo[filesize<50M]+bestaudio/best[filesize<50M]/bestvideo+bestaudio/best",
             "--merge-output-format",

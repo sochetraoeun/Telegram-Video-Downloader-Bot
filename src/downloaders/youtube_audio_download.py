@@ -28,6 +28,7 @@ async def download_audio(
             "yt-dlp",
             "--no-warnings",
             "--no-check-certificates",
+            "--no-playlist",
             "--extract-audio",
             "--audio-format",
             "mp3",
