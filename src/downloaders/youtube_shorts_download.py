@@ -1,7 +1,9 @@
 """YouTube Shorts download logic — short-form vertical videos via yt-dlp."""
 
 import io
+import os
 import asyncio
+import tempfile
 
 from loguru import logger
 
@@ -17,15 +19,19 @@ async def download_short(
 ) -> DownloadResult:
     """Download a YouTube Short into memory.
 
-    Shorts are typically short vertical videos, so we use a simpler
-    format selector optimized for quick downloads.
+    Downloads to a temp file first (required for ffmpeg muxing of
+    separate video+audio streams), then reads into BytesIO.
     """
     title = info.get("title") or info.get("fulltitle")
     duration = info.get("duration")
     width = info.get("width")
     height = info.get("height")
 
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = tmp.name
+
         cmd = [
             "yt-dlp",
             "--no-warnings",
@@ -36,7 +42,8 @@ async def download_short(
             "--merge-output-format",
             "mp4",
             "--output",
-            "-",
+            tmp_path,
+            "--force-overwrites",
             "--quiet",
             *(cookie_args or []),
             url,
@@ -48,7 +55,7 @@ async def download_short(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        stdout, stderr = await asyncio.wait_for(
+        _, stderr = await asyncio.wait_for(
             process.communicate(), timeout=120
         )
 
@@ -59,14 +66,17 @@ async def download_short(
                 platform="youtube",
             )
 
-        if not stdout:
+        if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
             raise DownloadError(
                 "No video data received",
                 platform="youtube",
             )
 
-        buffer = io.BytesIO(stdout)
-        file_size = len(stdout)
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+
+        buffer = io.BytesIO(data)
+        file_size = len(data)
         buffer.seek(0)
 
         logger.info(
@@ -92,3 +102,6 @@ async def download_short(
         raise
     except Exception as e:
         raise DownloadError(f"Unexpected error: {e}", platform="youtube")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)

@@ -1,7 +1,10 @@
 """YouTube audio extraction — convert to MP3 via yt-dlp + ffmpeg."""
 
 import io
+import os
 import asyncio
+import glob
+import tempfile
 
 from loguru import logger
 
@@ -17,13 +20,17 @@ async def download_audio(
 ) -> DownloadResult:
     """Extract audio from a YouTube video and return as MP3.
 
-    Uses yt-dlp's built-in audio extraction with ffmpeg post-processing.
-    Pipes the MP3 output directly to stdout for in-memory capture.
+    Downloads to a temp file first since yt-dlp audio extraction with
+    ffmpeg post-processing requires seekable output.
     """
     title = info.get("title") or info.get("fulltitle")
     duration = info.get("duration")
 
+    tmp_dir = None
     try:
+        tmp_dir = tempfile.mkdtemp(prefix="yt_audio_")
+        output_template = os.path.join(tmp_dir, "audio.%(ext)s")
+
         cmd = [
             "yt-dlp",
             "--no-warnings",
@@ -35,7 +42,7 @@ async def download_audio(
             "--audio-quality",
             "0",
             "--output",
-            "-",
+            output_template,
             "--quiet",
             *(cookie_args or []),
             url,
@@ -47,7 +54,7 @@ async def download_audio(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        stdout, stderr = await asyncio.wait_for(
+        _, stderr = await asyncio.wait_for(
             process.communicate(), timeout=300
         )
 
@@ -58,14 +65,24 @@ async def download_audio(
                 platform="youtube",
             )
 
-        if not stdout:
-            raise DownloadError(
-                "No audio data received",
-                platform="youtube",
-            )
+        mp3_files = glob.glob(os.path.join(tmp_dir, "*.mp3"))
+        if not mp3_files:
+            all_files = glob.glob(os.path.join(tmp_dir, "*"))
+            if all_files:
+                mp3_files = all_files
+            else:
+                raise DownloadError(
+                    "No audio data received",
+                    platform="youtube",
+                )
 
-        buffer = io.BytesIO(stdout)
-        file_size = len(stdout)
+        audio_path = mp3_files[0]
+
+        with open(audio_path, "rb") as f:
+            data = f.read()
+
+        buffer = io.BytesIO(data)
+        file_size = len(data)
         buffer.seek(0)
 
         safe_title = (title or "youtube_audio").replace("/", "_")[:60]
@@ -91,3 +108,14 @@ async def download_audio(
         raise
     except Exception as e:
         raise DownloadError(f"Unexpected error: {e}", platform="youtube")
+    finally:
+        if tmp_dir and os.path.exists(tmp_dir):
+            for f in glob.glob(os.path.join(tmp_dir, "*")):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
+            try:
+                os.rmdir(tmp_dir)
+            except OSError:
+                pass
