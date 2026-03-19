@@ -12,7 +12,9 @@ from src.downloaders.base_downloader import (
 )
 
 
-async def download_short(url: str, info: dict) -> DownloadResult:
+async def download_short(
+    url: str, info: dict, cookie_args: list[str] | None = None
+) -> DownloadResult:
     """Download a YouTube Short into memory.
 
     Shorts are typically short vertical videos, so we use a simpler
@@ -24,7 +26,7 @@ async def download_short(url: str, info: dict) -> DownloadResult:
     height = info.get("height")
 
     try:
-        process = await asyncio.create_subprocess_exec(
+        cmd = [
             "yt-dlp",
             "--no-warnings",
             "--no-check-certificates",
@@ -35,7 +37,12 @@ async def download_short(url: str, info: dict) -> DownloadResult:
             "--output",
             "-",
             "--quiet",
+            *(cookie_args or []),
             url,
+        ]
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

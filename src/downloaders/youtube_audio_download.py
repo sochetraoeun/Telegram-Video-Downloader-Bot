@@ -12,7 +12,9 @@ from src.downloaders.base_downloader import (
 )
 
 
-async def download_audio(url: str, info: dict) -> DownloadResult:
+async def download_audio(
+    url: str, info: dict, cookie_args: list[str] | None = None
+) -> DownloadResult:
     """Extract audio from a YouTube video and return as MP3.
 
     Uses yt-dlp's built-in audio extraction with ffmpeg post-processing.
@@ -22,7 +24,7 @@ async def download_audio(url: str, info: dict) -> DownloadResult:
     duration = info.get("duration")
 
     try:
-        process = await asyncio.create_subprocess_exec(
+        cmd = [
             "yt-dlp",
             "--no-warnings",
             "--no-check-certificates",
@@ -34,7 +36,12 @@ async def download_audio(url: str, info: dict) -> DownloadResult:
             "--output",
             "-",
             "--quiet",
+            *(cookie_args or []),
             url,
+        ]
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

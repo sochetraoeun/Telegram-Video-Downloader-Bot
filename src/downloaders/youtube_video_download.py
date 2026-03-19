@@ -12,7 +12,9 @@ from src.downloaders.base_downloader import (
 )
 
 
-async def download_video(url: str, info: dict) -> DownloadResult:
+async def download_video(
+    url: str, info: dict, cookie_args: list[str] | None = None
+) -> DownloadResult:
     """Download a regular YouTube video into memory.
 
     Uses yt-dlp with best merged format capped at 50MB,
@@ -24,7 +26,7 @@ async def download_video(url: str, info: dict) -> DownloadResult:
     height = info.get("height")
 
     try:
-        process = await asyncio.create_subprocess_exec(
+        cmd = [
             "yt-dlp",
             "--no-warnings",
             "--no-check-certificates",
@@ -35,7 +37,12 @@ async def download_video(url: str, info: dict) -> DownloadResult:
             "--output",
             "-",
             "--quiet",
+            *(cookie_args or []),
             url,
+        ]
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

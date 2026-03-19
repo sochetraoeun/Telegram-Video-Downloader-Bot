@@ -44,6 +44,18 @@ class Settings(BaseSettings):
         validation_alias="INSTAGRAM_COOKIES_BASE64",
     )
 
+    # YouTube (optional — required by YouTube to bypass bot detection)
+    youtube_cookies_file: str | None = Field(
+        default=None,
+        description="Path to Netscape-format cookies.txt for YouTube",
+        validation_alias="YOUTUBE_COOKIES_FILE",
+    )
+    youtube_cookies_base64: str | None = Field(
+        default=None,
+        description="Base64-encoded cookies.txt for YouTube (for Railway/deploy)",
+        validation_alias="YOUTUBE_COOKIES_BASE64",
+    )
+
     @property
     def platforms_list(self) -> list[str]:
         return [p.strip() for p in self.supported_platforms.split(",")]
@@ -83,6 +95,20 @@ def _load_settings() -> Settings:
             raise RuntimeError(
                 f"Failed to decode INSTAGRAM_COOKIES_BASE64: {e}. "
                 "Ensure it's valid base64 from: base64 -i instagram_cookies.txt | tr -d '\\n'"
+            ) from e
+
+    # If YOUTUBE_COOKIES_BASE64 is set, decode and write to temp file
+    if s.youtube_cookies_base64 and not s.youtube_cookies_file:
+        try:
+            cookie_bytes = base64.b64decode(s.youtube_cookies_base64)
+            cookie_path = "/tmp/youtube_cookies.txt"
+            with open(cookie_path, "wb") as f:
+                f.write(cookie_bytes)
+            s = s.model_copy(update={"youtube_cookies_file": cookie_path})
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to decode YOUTUBE_COOKIES_BASE64: {e}. "
+                "Ensure it's valid base64 from: base64 -i youtube_cookies.txt | tr -d '\\n'"
             ) from e
 
     return s

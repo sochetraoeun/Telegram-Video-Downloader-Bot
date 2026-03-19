@@ -14,10 +14,18 @@ from src.downloaders.base_downloader import (
 from src.downloaders.youtube_video_download import download_video
 from src.downloaders.youtube_shorts_download import download_short
 from src.downloaders.youtube_audio_download import download_audio
+from src.config.settings import settings
 
 _SHORTS_PATTERN = re.compile(
     r"https?://(www\.)?youtube\.com/shorts/[\w-]+", re.IGNORECASE
 )
+
+
+def _get_cookie_args() -> list[str]:
+    """Build yt-dlp cookie arguments if YouTube cookies are configured."""
+    if settings.youtube_cookies_file:
+        return ["--cookies", settings.youtube_cookies_file]
+    return []
 
 
 class YouTubeDownloader(BaseDownloader):
@@ -42,28 +50,34 @@ class YouTubeDownloader(BaseDownloader):
         """Download YouTube media (video, Short, or audio) into memory."""
         logger.info(f"[YouTube] Downloading: {url}")
 
-        info = await self._extract_info(url)
+        cookie_args = _get_cookie_args()
+        info = await self._extract_info(url, cookie_args)
 
         if audio_only:
             logger.info("[YouTube] Audio-only mode requested")
-            return await download_audio(url, info)
+            return await download_audio(url, info, cookie_args)
 
         if self._is_shorts(url):
             logger.info("[YouTube] Detected Shorts URL")
-            return await download_short(url, info)
+            return await download_short(url, info, cookie_args)
 
-        return await download_video(url, info)
+        return await download_video(url, info, cookie_args)
 
-    async def _extract_info(self, url: str) -> dict:
+    async def _extract_info(self, url: str, cookie_args: list[str]) -> dict:
         """Extract metadata with yt-dlp --dump-json."""
         try:
-            process = await asyncio.create_subprocess_exec(
+            cmd = [
                 "yt-dlp",
                 "--no-warnings",
                 "--no-check-certificates",
                 "--dump-json",
                 "--quiet",
+                *cookie_args,
                 url,
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -73,16 +87,39 @@ class YouTubeDownloader(BaseDownloader):
 
             if process.returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                err_lower = error_msg.lower()
 
-                if any(k in error_msg.lower() for k in ("private", "unavailable", "removed")):
+                if any(k in err_lower for k in ("private video", "video is private")):
                     raise DownloadError(
-                        "This video is private, unavailable, or has been removed",
+                        "This video is private",
                         platform=self.platform,
                         retryable=False,
                     )
-                if "sign in" in error_msg.lower() or "age" in error_msg.lower():
+                if "has been removed" in err_lower or "video is unavailable" in err_lower:
                     raise DownloadError(
-                        "This video requires sign-in or is age-restricted",
+                        "This video has been removed or is unavailable",
+                        platform=self.platform,
+                        retryable=False,
+                    )
+                if "age" in err_lower and "restrict" in err_lower:
+                    raise DownloadError(
+                        "This video is age-restricted and requires cookies to download. "
+                        "Set YOUTUBE_COOKIES_FILE or YOUTUBE_COOKIES_BASE64 in your environment.",
+                        platform=self.platform,
+                        retryable=False,
+                    )
+                if "sign in" in err_lower or "confirm your age" in err_lower or "bot" in err_lower:
+                    if not cookie_args:
+                        raise DownloadError(
+                            "YouTube requires authentication. "
+                            "Please set YOUTUBE_COOKIES_FILE or YOUTUBE_COOKIES_BASE64 "
+                            "in your environment to enable YouTube downloads.",
+                            platform=self.platform,
+                            retryable=False,
+                        )
+                    raise DownloadError(
+                        "YouTube cookies may be expired or invalid. "
+                        "Re-export cookies from your browser and update YOUTUBE_COOKIES_FILE.",
                         platform=self.platform,
                         retryable=False,
                     )
