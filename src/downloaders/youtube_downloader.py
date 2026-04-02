@@ -20,12 +20,42 @@ _SHORTS_PATTERN = re.compile(
     r"https?://(www\.)?youtube\.com/shorts/[\w-]+", re.IGNORECASE
 )
 
+_PLAYER_CLIENT_STRATEGIES = [
+    "ios,web",
+    "android,web",
+    "tv,ios",
+    "default",
+]
+
 
 def _get_cookie_args() -> list[str]:
     """Build yt-dlp cookie arguments if YouTube cookies are configured."""
     if settings.youtube_cookies_file:
         return ["--cookies", settings.youtube_cookies_file]
     return []
+
+
+def _get_base_args(player_clients: str = "ios,web") -> list[str]:
+    """Common yt-dlp arguments that help bypass bot detection without cookies."""
+    args = [
+        "yt-dlp",
+        "--no-warnings",
+        "--no-check-certificates",
+        "--no-playlist",
+        "--extractor-args", f"youtube:player_client={player_clients}",
+    ]
+    return args
+
+
+def _is_bot_or_auth_error(error_msg: str) -> bool:
+    """Check if the error indicates bot detection or auth requirement."""
+    err_lower = error_msg.lower()
+    bot_keywords = [
+        "sign in", "confirm your age", "bot", "verify",
+        "please sign in", "login required", "authentication",
+        "consent", "cookies",
+    ]
+    return any(k in err_lower for k in bot_keywords)
 
 
 class YouTubeDownloader(BaseDownloader):
@@ -47,30 +77,59 @@ class YouTubeDownloader(BaseDownloader):
         )
 
     async def download(self, url: str, audio_only: bool = False) -> DownloadResult:
-        """Download YouTube media (video, Short, or audio) into memory."""
+        """Download YouTube media (video, Short, or audio) into memory.
+
+        Tries multiple player-client strategies to bypass bot detection
+        without requiring cookies.
+        """
         logger.info(f"[YouTube] Downloading: {url}")
 
         cookie_args = _get_cookie_args()
-        info = await self._extract_info(url, cookie_args)
+        last_error: Exception | None = None
 
-        if audio_only:
-            logger.info("[YouTube] Audio-only mode requested")
-            return await download_audio(url, info, cookie_args)
+        for strategy in _PLAYER_CLIENT_STRATEGIES:
+            try:
+                logger.debug(f"[YouTube] Trying player_client={strategy}")
+                info = await self._extract_info(url, cookie_args, player_clients=strategy)
 
-        if self._is_shorts(url):
-            logger.info("[YouTube] Detected Shorts URL")
-            return await download_short(url, info, cookie_args)
+                if audio_only:
+                    logger.info("[YouTube] Audio-only mode requested")
+                    return await download_audio(url, info, cookie_args, player_clients=strategy)
 
-        return await download_video(url, info, cookie_args)
+                if self._is_shorts(url):
+                    logger.info("[YouTube] Detected Shorts URL")
+                    return await download_short(url, info, cookie_args, player_clients=strategy)
 
-    async def _extract_info(self, url: str, cookie_args: list[str]) -> dict:
+                return await download_video(url, info, cookie_args, player_clients=strategy)
+
+            except DownloadError as e:
+                last_error = e
+                if not e.retryable:
+                    if _is_bot_or_auth_error(e.message) and strategy != _PLAYER_CLIENT_STRATEGIES[-1]:
+                        logger.warning(
+                            f"[YouTube] Strategy {strategy} hit bot detection, trying next..."
+                        )
+                        continue
+                    raise
+                logger.warning(f"[YouTube] Strategy {strategy} failed: {e.message}")
+                continue
+
+        raise last_error or DownloadError(
+            "All YouTube download strategies failed",
+            platform=self.platform,
+            retryable=False,
+        )
+
+    async def _extract_info(
+        self,
+        url: str,
+        cookie_args: list[str],
+        player_clients: str = "ios,web",
+    ) -> dict:
         """Extract metadata with yt-dlp --dump-json."""
         try:
             cmd = [
-                "yt-dlp",
-                "--no-warnings",
-                "--no-check-certificates",
-                "--no-playlist",
+                *_get_base_args(player_clients),
                 "--dump-json",
                 "--quiet",
                 *cookie_args,
@@ -104,23 +163,14 @@ class YouTubeDownloader(BaseDownloader):
                     )
                 if "age" in err_lower and "restrict" in err_lower:
                     raise DownloadError(
-                        "This video is age-restricted and requires cookies to download. "
-                        "Set YOUTUBE_COOKIES_FILE or YOUTUBE_COOKIES_BASE64 in your environment.",
+                        "This video is age-restricted. "
+                        "Try a different video, or set YOUTUBE_COOKIES_FILE for age-restricted content.",
                         platform=self.platform,
                         retryable=False,
                     )
-                if "sign in" in err_lower or "confirm your age" in err_lower or "bot" in err_lower:
-                    if not cookie_args:
-                        raise DownloadError(
-                            "YouTube requires authentication. "
-                            "Please set YOUTUBE_COOKIES_FILE or YOUTUBE_COOKIES_BASE64 "
-                            "in your environment to enable YouTube downloads.",
-                            platform=self.platform,
-                            retryable=False,
-                        )
+                if _is_bot_or_auth_error(error_msg):
                     raise DownloadError(
-                        "YouTube cookies may be expired or invalid. "
-                        "Re-export cookies from your browser and update YOUTUBE_COOKIES_FILE.",
+                        f"YouTube bot detection triggered (player_client={player_clients})",
                         platform=self.platform,
                         retryable=False,
                     )
