@@ -21,10 +21,19 @@ _SHORTS_PATTERN = re.compile(
 )
 
 _PLAYER_CLIENT_STRATEGIES = [
-    "ios,web",
-    "android,web",
+    "ios,mweb",
+    "android,web_safari",
     "tv,ios",
-    "default",
+]
+
+_BOT_DETECTION_PHRASES = [
+    "sign in to confirm",
+    "please sign in",
+    "confirm your age",
+    "login required",
+    "not a bot",
+    "are you a robot",
+    "consent",
 ]
 
 
@@ -35,27 +44,10 @@ def _get_cookie_args() -> list[str]:
     return []
 
 
-def _get_base_args(player_clients: str = "ios,web") -> list[str]:
-    """Common yt-dlp arguments that help bypass bot detection without cookies."""
-    args = [
-        "yt-dlp",
-        "--no-warnings",
-        "--no-check-certificates",
-        "--no-playlist",
-        "--extractor-args", f"youtube:player_client={player_clients}",
-    ]
-    return args
-
-
-def _is_bot_or_auth_error(error_msg: str) -> bool:
-    """Check if the error indicates bot detection or auth requirement."""
+def _is_bot_detection_error(error_msg: str) -> bool:
+    """Check if yt-dlp failed specifically due to YouTube bot detection."""
     err_lower = error_msg.lower()
-    bot_keywords = [
-        "sign in", "confirm your age", "bot", "verify",
-        "please sign in", "login required", "authentication",
-        "consent", "cookies",
-    ]
-    return any(k in err_lower for k in bot_keywords)
+    return any(phrase in err_lower for phrase in _BOT_DETECTION_PHRASES)
 
 
 class YouTubeDownloader(BaseDownloader):
@@ -85,11 +77,11 @@ class YouTubeDownloader(BaseDownloader):
         logger.info(f"[YouTube] Downloading: {url}")
 
         cookie_args = _get_cookie_args()
-        last_error: Exception | None = None
 
-        for strategy in _PLAYER_CLIENT_STRATEGIES:
+        for i, strategy in enumerate(_PLAYER_CLIENT_STRATEGIES):
+            is_last = i == len(_PLAYER_CLIENT_STRATEGIES) - 1
             try:
-                logger.debug(f"[YouTube] Trying player_client={strategy}")
+                logger.info(f"[YouTube] Trying player_client={strategy}")
                 info = await self._extract_info(url, cookie_args, player_clients=strategy)
 
                 if audio_only:
@@ -103,18 +95,14 @@ class YouTubeDownloader(BaseDownloader):
                 return await download_video(url, info, cookie_args, player_clients=strategy)
 
             except DownloadError as e:
-                last_error = e
-                if not e.retryable:
-                    if _is_bot_or_auth_error(e.message) and strategy != _PLAYER_CLIENT_STRATEGIES[-1]:
-                        logger.warning(
-                            f"[YouTube] Strategy {strategy} hit bot detection, trying next..."
-                        )
-                        continue
-                    raise
-                logger.warning(f"[YouTube] Strategy {strategy} failed: {e.message}")
-                continue
+                if not is_last and _is_bot_detection_error(e.message):
+                    logger.warning(
+                        f"[YouTube] Strategy {strategy} hit bot detection, trying next..."
+                    )
+                    continue
+                raise
 
-        raise last_error or DownloadError(
+        raise DownloadError(
             "All YouTube download strategies failed",
             platform=self.platform,
             retryable=False,
@@ -124,12 +112,16 @@ class YouTubeDownloader(BaseDownloader):
         self,
         url: str,
         cookie_args: list[str],
-        player_clients: str = "ios,web",
+        player_clients: str = "ios,mweb",
     ) -> dict:
         """Extract metadata with yt-dlp --dump-json."""
         try:
             cmd = [
-                *_get_base_args(player_clients),
+                "yt-dlp",
+                "--no-warnings",
+                "--no-check-certificates",
+                "--no-playlist",
+                "--extractor-args", f"youtube:player_client={player_clients}",
                 "--dump-json",
                 "--quiet",
                 *cookie_args,
@@ -168,7 +160,7 @@ class YouTubeDownloader(BaseDownloader):
                         platform=self.platform,
                         retryable=False,
                     )
-                if _is_bot_or_auth_error(error_msg):
+                if _is_bot_detection_error(error_msg):
                     raise DownloadError(
                         f"YouTube bot detection triggered (player_client={player_clients})",
                         platform=self.platform,
@@ -176,7 +168,7 @@ class YouTubeDownloader(BaseDownloader):
                     )
 
                 raise DownloadError(
-                    f"yt-dlp info extraction failed: {error_msg}",
+                    f"yt-dlp failed: {error_msg}",
                     platform=self.platform,
                 )
 
