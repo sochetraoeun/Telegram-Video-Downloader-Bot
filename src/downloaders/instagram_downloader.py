@@ -27,6 +27,15 @@ from src.downloaders.instagram_post_video_download import (
     _cookies_fn,
 )
 from src.downloaders.instagram_video_download import download_video_bytes
+from src.downloaders.instagram_audio_download import (
+    download_instagram_audio,
+    info_has_extractable_audio,
+)
+from src.downloaders.instagram_story_download import (
+    _normalize_story_url,
+    _extract_info as _story_extract_info,
+    _get_cookies_args as _story_get_cookies_args,
+)
 
 _MOBILE_HEADERS = {
     "User-Agent": (
@@ -55,14 +64,64 @@ class InstagramDownloader(BaseDownloader):
         )
         return bool(pattern.match(url))
 
-    async def download(self, url: str) -> DownloadResult:
-        """Route to Story, Post image, or Post video downloader."""
+    async def download(self, url: str, audio_only: bool = False) -> DownloadResult:
+        """Route to Story, Post image, or Post video downloader; optional MP3 extraction."""
+        if audio_only:
+            logger.info("[Instagram] Audio-only (MP3) requested")
+            return await self._download_audio_only(url)
+
         if self._STORY_PATTERN.match(url):
             logger.info("[Instagram] Routing to Story downloader (with cookies)")
             return await download_story(url)
 
         logger.info("[Instagram] Routing to Post (image or video)")
         return await self._download_post(url)
+
+    async def _download_audio_only(self, url: str) -> DownloadResult:
+        """Extract MP3 from Reels, video posts, or video stories (requires cookies for stories)."""
+        if self._STORY_PATTERN.match(url):
+            norm = _normalize_story_url(url)
+            if not _story_get_cookies_args():
+                raise DownloadError(
+                    "Instagram Stories require login. Add INSTAGRAM_COOKIES_BASE64 or "
+                    "INSTAGRAM_COOKIES_FILE. See deploy.md.",
+                    platform="instagram",
+                    retryable=False,
+                )
+            info = await _story_extract_info(norm)
+            if info is None:
+                raise DownloadError(
+                    "Could not fetch story — session may have expired. "
+                    "Please update the cookies file.",
+                    platform="instagram",
+                    retryable=False,
+                )
+            if not info_has_extractable_audio(info):
+                raise DownloadError(
+                    "This story has no video audio (image only).",
+                    platform="instagram",
+                    retryable=False,
+                )
+            return await download_instagram_audio(
+                norm, _story_get_cookies_args(), info
+            )
+
+        info = await self._extract_info(url)
+        meta: dict = info if info is not None else {}
+        if meta:
+            if self._is_carousel(meta) and self._is_all_images_carousel(meta):
+                raise DownloadError(
+                    "This post has no video — only images, so there is no audio to extract.",
+                    platform="instagram",
+                    retryable=False,
+                )
+            if not self._is_carousel(meta) and self._is_image_post(meta):
+                raise DownloadError(
+                    "This post is an image — no audio to extract.",
+                    platform="instagram",
+                    retryable=False,
+                )
+        return await download_instagram_audio(url, _cookies_fn(url), meta)
 
     @staticmethod
     def _is_carousel(info: dict) -> bool:

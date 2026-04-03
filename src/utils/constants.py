@@ -13,8 +13,8 @@ Send me a link from **TikTok**, **Instagram**, or **YouTube** and I'll download 
 
 📌 **Supported platforms:**
 • 🎵 TikTok (videos, no watermark + image slideshows)
-• 📸 Instagram (Reels, Posts, Stories + image carousels)
-• ▶️ YouTube (videos, Shorts + MP3 audio)
+• 📸 Instagram (Reels, Posts, Stories + image carousels + MP3 via /audio)
+• ▶️ YouTube (videos, Shorts + MP3 via /audio)
 
 Just paste a link and I'll handle the rest! 🚀"""
 
@@ -43,4 +43,4 @@ HELP_MESSAGE = """🆘 **How to use this bot:**
 • Works in group chats too!
 • Videos and images are downloaded in the best available quality
 • Image carousels are sent as albums
-• Use /audio with a YouTube link to get MP3"""
+• Use /audio with a YouTube or Instagram **video** link to get MP3"""

@@ -25,7 +25,7 @@ A Telegram bot that receives video and image links from **TikTok**, **Instagram*
 | 3   | **Native Media Send** | Sends video as Telegram video (plays inline) or image as Telegram photo (displays inline) |
 | 4   | **Emoji Reactions**   | Bot reacts to messages with emoji (👍, ❤️, 🔥, etc.) to feel human-like                   |
 | 5   | **TikTok Support**    | Download TikTok videos (no watermark) and images                                          |
-| 6   | **Instagram Support** | Download Instagram Reels / Posts (no cookies) and Stories (requires cookies)              |
+| 6   | **Instagram Support** | Download Instagram Reels / Posts (no cookies) and Stories (requires cookies); extract MP3 from video via `/audio` |
 | 7   | **YouTube Support**   | Download YouTube videos and Shorts in best quality; extract MP3 audio via `/audio`        |
 
 ### 🚀 Additional Features
@@ -40,13 +40,13 @@ A Telegram bot that receives video and image links from **TikTok**, **Instagram*
 | 13  | **Rate Limiting**            | Prevent spam / abuse per user (e.g., 10 videos per minute)           |
 | 14  | **Error Handling**           | Friendly error messages when link is invalid or video is unavailable |
 | 15  | **File Size Handling**       | Telegram limit is 50MB for bots — compress or split large videos     |
-| 16  | **Audio Extraction**         | `/audio <YouTube link>` to extract audio only (MP3)                  |
+| 16  | **Audio Extraction**         | `/audio <YouTube or Instagram video link>` to extract audio only (MP3) |
 | 17  | **Inline Mode**              | Use bot inline in any chat: `@botname <link>` → sends video          |
 | 18  | **Watermark Removal**        | Remove TikTok watermark automatically                                |
 | 19  | **TikTok Image Download**    | Download TikTok image posts (e.g., photo slideshows)                 |
 | 20  | **Instagram Image Download** | Download Instagram image posts (single or carousel)                  |
 | 21  | **YouTube Shorts Download**  | Download YouTube Shorts (short-form vertical videos)                 |
-| 22  | **YouTube MP3 Extract**      | Extract audio from YouTube videos and send as MP3 via `/audio`       |
+| 22  | **YouTube / Instagram MP3**  | Extract audio from YouTube or Instagram videos and send as MP3 via `/audio` (Instagram Stories need cookies) |
 
 ---
 
@@ -87,13 +87,14 @@ graph TB
         WORKER -->|YouTube URL| YT[YouTube Router]
         IG -->|/stories/| IG_STORY[Story Downloader + cookies]
         IG -->|/reel/ /p/| IG_POST[Post Downloader, no cookies]
+        IG -->|/audio cmd| IG_AUDIO[Audio Extractor → MP3]
         YT -->|/watch?v=| YT_VID[Video Downloader]
         YT -->|/shorts/| YT_SHORT[Shorts Downloader]
         YT -->|/audio cmd| YT_AUDIO[Audio Extractor → MP3]
     end
 
     subgraph In-Memory & Delivery
-        TT & IG_STORY & IG_POST & YT_VID & YT_SHORT & YT_AUDIO -->|Stream to RAM| MEM[BytesIO Buffer]
+        TT & IG_STORY & IG_POST & IG_AUDIO & YT_VID & YT_SHORT & YT_AUDIO -->|Stream to RAM| MEM[BytesIO Buffer]
         MEM -->|Upload| BOT
         BOT -->|Send Video/Photo| TG
         MEM -->|Free| GC[Garbage Collected]
@@ -160,6 +161,7 @@ TG-Project/
 │   │   ├── instagram_post_image_download.py  # Post images only
 │   │   ├── instagram_post_video_download.py  # Post videos (Reels) only
 │   │   ├── instagram_video_download.py    # Shared video download logic
+│   │   ├── instagram_audio_download.py    # Instagram video → MP3 (yt-dlp + ffmpeg, temp file)
 │   │   ├── instagram_image_download.py    # Shared image download logic
 │   │   ├── youtube_downloader.py          # YouTube orchestrator — routes video/Shorts/audio
 │   │   ├── youtube_video_download.py      # Regular YouTube video download
@@ -233,7 +235,7 @@ sequenceDiagram
 | ----------------------- | ------------------------------------------------ |
 | `/start`                | Welcome message + instructions                   |
 | `/help`                 | List all commands & supported platforms          |
-| `/audio <YouTube link>` | Extract audio from YouTube video and send as MP3 |
+| `/audio <YouTube or Instagram link>` | Extract audio from a video and send as MP3 (Instagram Stories require cookies) |
 | `/cancel`               | Cancel current download                          |
 
 ---
@@ -243,7 +245,7 @@ sequenceDiagram
 The bot will detect URLs using regex patterns for each supported platform. Both **video** and **image** content use the same URL patterns — the downloader determines media type at fetch time:
 
 - **TikTok:** `/@user/video/123` — can be video or image slideshow
-- **Instagram:** `/p/ABC123` — single image, carousel, or video (no cookies); `/reel/` — video (no cookies); `/stories/` — video or image (**requires cookies**)
+- **Instagram:** `/p/ABC123` — single image, carousel, or video (no cookies); `/reel/` — video (no cookies); `/stories/` — video or image (**requires cookies**). **`/audio`** with a Reel, video post, or video story extracts MP3 (same cookie rules as normal download).
 - **YouTube:** `/watch?v=...` — regular videos; `/shorts/...` — Shorts; `youtu.be/...` — short links; `/embed/...` and `/live/...` — embedded and live links
 
 ```python
@@ -418,7 +420,7 @@ def is_rate_limited(user_id: int, max_per_min: int = 10) -> bool:
 - [ ] In-memory rate limiting (dict + TTL)
 - [ ] Error handling with retries
 - [ ] Auto-caption from original post
-- [ ] Audio extraction (`/audio` command — YouTube MP3)
+- [ ] Audio extraction (`/audio` command — YouTube + Instagram video → MP3)
 - [ ] In-memory compression pipeline (ffmpeg)
 
 ### Phase 3 — Scale (Week 5-8)
@@ -489,7 +491,7 @@ INSTAGRAM_COOKIES_FILE=path/to/instagram_cookies.txt
 | Deployment  | Docker on VPS                        | Full control, cheap, no serverless cold starts                         |
 | Config      | `pydantic-settings`                  | Type-safe env var management with validation                           |
 | Platforms   | TikTok + Instagram + YouTube         | Three most-requested platforms, all supported by yt-dlp                |
-| Instagram   | Story (cookies) vs Post (no cookies) | Stories require login; Reels/Posts work without cookies — split logic  |
+| Instagram   | Story (cookies) vs Post (no cookies) | Stories require login; Reels/Posts often work without cookies; `/audio` uses yt-dlp extract-audio → MP3 (carousel: first video only) |
 
 ---
 

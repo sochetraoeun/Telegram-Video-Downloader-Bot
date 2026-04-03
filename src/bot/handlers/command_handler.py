@@ -10,6 +10,7 @@ from src.utils.formatter import format_file_size, format_success_message
 from src.bot.reactions.reactor import react
 from src.downloaders.base_downloader import DownloadError, MediaType
 from src.downloaders.youtube_downloader import YouTubeDownloader
+from src.downloaders.instagram_downloader import InstagramDownloader
 from src.services.video_service import free_result
 
 
@@ -39,7 +40,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the /audio command — extract audio from a YouTube link as MP3."""
+    """Handle the /audio command — extract audio from YouTube or Instagram video as MP3."""
     if not update.message:
         return
 
@@ -50,36 +51,41 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not text:
         await update.message.reply_text(
             "🎵 **Audio Extraction**\n\n"
-            "Send a YouTube link after the command:\n"
-            "`/audio https://www.youtube.com/watch?v=...`\n\n"
+            "Send a **YouTube** or **Instagram** video link after the command:\n"
+            "`/audio https://www.youtube.com/watch?v=...`\n"
+            "`/audio https://www.instagram.com/reel/...`\n\n"
             "I'll extract the audio and send it as MP3!",
             parse_mode="Markdown",
         )
         return
 
     urls = extract_supported_urls(text)
-    youtube_urls = [(url, p) for url, p in urls if p == "youtube"]
+    audio_urls = [(url, p) for url, p in urls if p in ("youtube", "instagram")]
 
-    if not youtube_urls:
+    if not audio_urls:
         await update.message.reply_text(
-            "❌ Please provide a valid YouTube link.\n"
-            "Example: `/audio https://www.youtube.com/watch?v=dQw4w9WgXcQ`",
+            "❌ Please provide a valid YouTube or Instagram video link.\n"
+            "Examples:\n"
+            "`/audio https://www.youtube.com/watch?v=dQw4w9WgXcQ`\n"
+            "`/audio https://www.instagram.com/reel/...`",
             parse_mode="Markdown",
         )
         return
 
-    url = youtube_urls[0][0]
+    url, platform = audio_urls[0]
     await react(update, "processing")
 
     status_msg = await update.message.reply_text(
-        "🎵 Extracting audio from YouTube...",
+        f"🎵 Extracting audio from **{platform.title()}**...",
         parse_mode="Markdown",
     )
 
     result = None
     try:
-        downloader = YouTubeDownloader()
-        result = await downloader.download(url, audio_only=True)
+        if platform == "youtube":
+            result = await YouTubeDownloader().download(url, audio_only=True)
+        else:
+            result = await InstagramDownloader().download(url, audio_only=True)
 
         try:
             await status_msg.edit_text(
