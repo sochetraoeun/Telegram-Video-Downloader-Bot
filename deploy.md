@@ -8,6 +8,13 @@ This bot runs **long polling** (`run_polling`) and does **not** expose an HTTP s
 
 That message means the service is a **Web Service** (or **Private Service**). Render waits for something to listen on `PORT`; this bot never does.
 
+**How to recognize it in logs (your bot may still start correctly):**
+
+- You see `🟢 Bot is now running!` and then **`No open ports detected, continuing to scan...`** every minute until **Port scan timeout**.
+- You see **`Setting WEB_CONCURRENCY=1 by default`** during deploy — that appears on **Web Services**, not on Background Workers.
+
+So the failure is **not** your Dockerfile or `BOT_TOKEN`; it is the **service type** in Render.
+
 **Fix:**
 
 1. In the Render Dashboard, open the failing service → **Settings** → scroll to **Danger Zone** → **Delete** (or leave it and create a new service).

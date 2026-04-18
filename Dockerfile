@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Intentional root install in container; silences pip's "running as root" warning
+ENV PIP_ROOT_USER_ACTION=ignore
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
