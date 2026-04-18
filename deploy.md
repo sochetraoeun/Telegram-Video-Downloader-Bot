@@ -4,6 +4,21 @@ Deploy your Telegram Media Downloader Bot to [Render](https://render.com).
 
 This bot runs **long polling** (`run_polling`) and does **not** expose an HTTP server. On Render you must use a **Background Worker**, not a Web Service.
 
+### If deploy fails: “Port scan timeout / no open ports”
+
+That message means the service is a **Web Service** (or **Private Service**). Render waits for something to listen on `PORT`; this bot never does.
+
+**Fix:**
+
+1. In the Render Dashboard, open the failing service → **Settings** → scroll to **Danger Zone** → **Delete** (or leave it and create a new service).
+2. Click **New +** → **Background Worker** (not “Web Service”).
+3. Connect the same repo, **Docker**, same `Dockerfile`, copy over **Environment** variables (especially `BOT_TOKEN`).
+4. Deploy again.
+
+You **cannot** turn an existing Web Service into a Background Worker; create a **Background Worker** from scratch.
+
+After the worker is running, a `telegram.error.TimedOut` in logs often clears once the wrong service type is fixed (deploy was failing or restarting during the port check). If timeouts continue on a worker, try redeploying, confirm `BOT_TOKEN`, or pick a Render **region** closer to you; you can also raise HTTP timeouts in code (see `ApplicationBuilder` in `python-telegram-bot` docs).
+
 ---
 
 ## Part 1: What You Need (Before Starting)
@@ -160,7 +175,9 @@ Reels and Posts work without cookies. **Stories** require login — add cookies 
 | `BOT_TOKEN` / `bot_token` error | Add `BOT_TOKEN` in Render → **Environment** (Step 4). No extra spaces.   |
 | **Instagram Stories fail**  | Add `INSTAGRAM_COOKIES_BASE64` (see Part 3).                                |
 | Build fails                 | Check **Logs** for the Docker build error.                                  |
+| **Port scan timeout / bind to a port** | You created a **Web Service**. Delete it and create a **Background Worker** (see callout above). |
 | Wrong service type          | Use a **Background Worker**, not a Web Service (no HTTP port for polling). |
+| `telegram.error.TimedOut`   | Often caused by failed Web Service deploys; switch to a worker first. If it persists, check token and region. |
 | Bot stops / billing         | Workers need a paid instance type for continuous running; check plan and billing. |
 
 ---
