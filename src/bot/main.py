@@ -1,6 +1,9 @@
 """Bot entry point — initializes and runs the Telegram bot."""
 
+import os
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from loguru import logger
@@ -29,6 +32,40 @@ def setup_logging() -> None:
         colorize=True,
     )
     logger.info("Logging configured ✅")
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 (stdlib API)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, format: str, *args) -> None:  # silence default stdout logs
+        return
+
+
+def start_health_server() -> None:
+    """Start a tiny HTTP server so hosts like Render (Web Service) pass their port scan.
+
+    Reads PORT from env (Render sets this). No-op if PORT is not set (local runs).
+    """
+    port_str = os.environ.get("PORT")
+    if not port_str:
+        return
+    try:
+        port = int(port_str)
+    except ValueError:
+        logger.warning(f"Invalid PORT value: {port_str!r}; skipping health server")
+        return
+
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+
+    thread = threading.Thread(
+        target=server.serve_forever, name="health-server", daemon=True
+    )
+    thread.start()
+    logger.info(f"🩺 Health server listening on 0.0.0.0:{port} (GET / → 200 ok)")
 
 
 def create_bot():
@@ -66,6 +103,8 @@ def main() -> None:
     logger.info(f"🔄 Max retries: {settings.max_retry_attempts}")
     logger.info(f"⚡ Max concurrent: {settings.max_concurrent_downloads}")
     logger.info("=" * 50)
+
+    start_health_server()
 
     app = create_bot()
 

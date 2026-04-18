@@ -2,7 +2,12 @@
 
 Deploy your Telegram Media Downloader Bot to [Render](https://render.com).
 
-This bot runs **long polling** (`run_polling`) and does **not** expose an HTTP server. On Render you must use a **Background Worker**, not a Web Service.
+This bot runs **long polling** (`run_polling`). On Render you have two deploy options:
+
+- **Background Worker** (recommended, paid) — no HTTP port needed; runs 24/7.
+- **Web Service** (works on Free tier) — requires a port to be open. This repo includes a tiny health server in `src/bot/main.py` (`start_health_server`) that listens on Render's `PORT` so the Web Service port scan succeeds.
+
+> **Free Web Service caveat:** Render free Web Services **spin down after ~15 minutes of no HTTP traffic**. A polling bot has no incoming traffic, so it will sleep and stop responding. Use an external uptime pinger (e.g. [UptimeRobot](https://uptimerobot.com)) hitting `https://<your-service>.onrender.com/` every 5–10 minutes, or upgrade to **Starter** ($7/month).
 
 ### If deploy fails: “Port scan timeout / no open ports”
 
