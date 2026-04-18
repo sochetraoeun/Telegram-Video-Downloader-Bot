@@ -1,0 +1,15 @@
+# Render Blueprint: Background Worker (Docker) for Telegram long-polling bot.
+# Deploy: Dashboard → Blueprints → New Blueprint Instance → select this repo.
+# You will be prompted for BOT_TOKEN (sync: false) or add it under Environment after deploy.
+#
+# Note: Render does not offer the "free" plan for background workers; Starter+ is required.
+
+services:
+  - type: worker
+    name: telegram-video-downloader-bot
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: BOT_TOKEN
+        sync: false

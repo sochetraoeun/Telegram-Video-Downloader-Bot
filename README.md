@@ -74,4 +74,4 @@ You should see `🟢 Bot is now running!` in the terminal. Open Telegram and mes
 
 ## Deployment
 
-See [deploy.md](deploy.md) for deploying to Railway.
+See [deploy.md](deploy.md) for deploying to Render.

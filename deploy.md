@@ -1,6 +1,8 @@
-# 🚀 Deploy to Railway — Step-by-Step Plan
+# Deploy to Render — Step-by-Step Plan
 
-Deploy your Telegram Media Downloader Bot to Railway.
+Deploy your Telegram Media Downloader Bot to [Render](https://render.com).
+
+This bot runs **long polling** (`run_polling`) and does **not** expose an HTTP server. On Render you must use a **Background Worker**, not a Web Service.
 
 ---
 
@@ -8,53 +10,41 @@ Deploy your Telegram Media Downloader Bot to Railway.
 
 | #   | What                   | How to Get                                                                                         |
 | --- | ---------------------- | -------------------------------------------------------------------------------------------------- |
-| 1   | **Railway account**    | Sign up at [railway.app](https://railway.app)                                                      |
+| 1   | **Render account**     | Sign up at [render.com](https://render.com)                                                        |
 | 2   | **GitHub account**     | Sign up at [github.com](https://github.com) if you don't have one                                  |
 | 3   | **Telegram Bot Token** | Message [@BotFather](https://t.me/BotFather) on Telegram → `/newbot` → follow prompts → copy token |
 | 4   | **Project on GitHub**  | Push this project to a GitHub repository                                                           |
+
+**Plan note:** Render’s **free** instance type is **not** available for background workers. You need at least **Starter** (or higher) for a worker that runs 24/7. See [Render pricing](https://render.com/pricing).
 
 ---
 
 ## Part 2: What to Do — Step by Step
 
-### Step 1: Add deployment config to your project
+### Step 1: Use the Dockerfile (recommended)
 
-Create a file named `nixpacks.toml` in your project root (same folder as `requirements.txt`):
+This repository already has a root `Dockerfile` that installs **ffmpeg**, **yt-dlp**, Python dependencies, and runs:
 
-```toml
-[phases.setup]
-nixPkgs = ["python311", "ffmpeg", "yt-dlp"]
+`python src/bot/main.py`
 
-[phases.install]
-cmds = ["pip install -r requirements.txt"]
-
-[start]
-cmd = "python src/bot/main.py"
-```
-
-This tells Railway to install Python, ffmpeg, yt-dlp, and how to run your bot.
+Render will build from this file when you choose **Docker** as the runtime. You do **not** need `nixpacks.toml` for Render (that file is for Nixpacks-based hosts such as Railway).
 
 ---
 
 ### Step 1.5: Run build test locally (optional but recommended)
 
-Before pushing to Railway, verify the build works on your machine.
-
-**Option A: Docker build (recommended — matches Railway)**
+**Option A: Docker build (matches Render)**
 
 ```bash
-# Build the image (same as Railway will do)
 docker build -t telegram-bot .
 
-
-# Run the bot (requires BOT_TOKEN in .env or pass it)
 docker run --env-file .env telegram-bot
 ```
 
 **Option B: Run with Python directly**
 
 ```bash
-# Install system deps first: ffmpeg, yt-dlp (via brew on macOS, apt on Linux)
+# System deps: ffmpeg, yt-dlp (brew on macOS, apt on Linux)
 # brew install ffmpeg yt-dlp   # macOS
 # sudo apt install ffmpeg && pip install yt-dlp   # Linux
 
@@ -71,89 +61,84 @@ If the bot starts and you see `🟢 Bot is now running!` in the logs, the build 
 If your project is not on GitHub yet:
 
 ```bash
-# Initialize git (if not already)
 git init
-
-# Add all files
 git add .
-
-# Commit
-git commit -m "Add Railway deployment"
-
-# Create repo on GitHub, then:
+git commit -m "Initial commit"
 git remote add origin https://github.com/YOUR_USERNAME/TG-Project.git
 git branch -M main
 git push -u origin main
 ```
 
-If it's already on GitHub, just add and push the new config:
+If it is already on GitHub, push any changes (including `render.yaml` if you use the Blueprint option below):
 
 ```bash
-git add nixpacks.toml
-git commit -m "Add Railway deployment config"
+git add .
+git commit -m "Configure Render deployment"
 git push origin main
 ```
 
 ---
 
-### Step 3: Create a Railway project
+### Step 3: Create a Render Background Worker
 
-1. Go to [railway.app](https://railway.app) and log in
-2. Click **New Project**
-3. Choose **Deploy from GitHub repo**
-4. Authorize Railway to access your GitHub (if asked)
-5. Select your **TG-Project** repository
-6. Click **Deploy Now**
+1. Open the [Render Dashboard](https://dashboard.render.com) and sign in.
+2. Click **New +** → **Background Worker**.
+3. Connect your **GitHub** account and select this repository (and branch, usually `main`).
+4. Configure the service:
+   - **Name:** e.g. `telegram-video-bot`
+   - **Language:** **Docker**
+   - **Dockerfile path:** `./Dockerfile` (default if the file is at the repo root)
+   - **Docker build context:** `.` (repo root)
+   - **Docker Command:** leave empty so Render uses the `CMD` in your Dockerfile (`python src/bot/main.py`).
+5. Choose an instance type (**Starter** or higher; **Free** is not available for workers).
+6. Click **Create Background Worker**.
 
-Railway will start building your project.
+Render will build the image and start the worker.
+
+**Optional — Blueprint:** If you prefer infrastructure-as-code, this repo can include `render.yaml`. In the dashboard go to **Blueprints** → **New Blueprint Instance**, connect the repo, and deploy. Set `BOT_TOKEN` when prompted (or add it under **Environment** after deploy).
 
 ---
 
 ### Step 4: Add your Bot Token (required)
 
-> **Important:** Without `BOT_TOKEN`, the bot will crash with "bot_token Field required". Add it before the first deploy.
+> **Important:** Without `BOT_TOKEN`, the bot will exit with a validation error. Add it before relying on the deploy.
 
-1. In Railway, click on your **service** (the deployed app)
-2. Go to the **Variables** tab
-3. Click **+ New Variable**
-4. Add:
-   - **Variable:** `BOT_TOKEN`
-   - **Value:** paste your Telegram bot token from BotFather
-5. Click **Add**
-
-Railway will redeploy automatically when you add variables.
+1. Open your **Background Worker** service in Render.
+2. Go to **Environment**.
+3. Add **Environment Variable**:
+   - **Key:** `BOT_TOKEN`
+   - **Value:** your token from BotFather
+4. Save. Render will redeploy (or restart) the service.
 
 ---
 
 ### Step 5: Wait for the build and check logs
 
-1. Go to the **Deployments** tab
-2. Wait for the build to finish (green checkmark)
-3. Click on the deployment → **View Logs**
-4. Look for: `🟢 Bot is now running!`
+1. Open the **Logs** tab for the worker.
+2. Wait for the Docker build to finish and the process to start.
+3. Look for: `🟢 Bot is now running!`
 
-If you see that, your bot is live.
+If you see that, the bot process is live.
 
 ---
 
 ### Step 6: Test your bot
 
-1. Open Telegram
-2. Find your bot (search by the username you gave BotFather)
-3. Send `/start` — you should get the welcome message
-4. Send a TikTok or Instagram link — the bot should download and send the media
+1. Open Telegram and find your bot.
+2. Send `/start` — you should get the welcome message.
+3. Send a supported link — the bot should download and send the media.
 
 ---
 
-## Part 3: Optional — Add More Variables
+## Part 3: Optional — More Environment Variables
 
-In Railway → Variables, you can add (all optional):
+In Render → your worker → **Environment**, you can add (all optional unless noted):
 
-| Variable                    | Value               | What it does                  |
+| Variable                    | Example             | What it does                  |
 | --------------------------- | ------------------- | ----------------------------- |
 | `BOT_USERNAME`              | `your_bot_username` | Your bot's @username          |
 | `MAX_FILE_SIZE_MB`          | `50`                | Max video size (default 50)   |
-| `RATE_LIMIT_PER_MIN`       | `10`                | Downloads per user per minute |
+| `RATE_LIMIT_PER_MIN`        | `10`                | Downloads per user per minute |
 | `SUPPORTED_PLATFORMS`       | `tiktok,instagram`  | Platforms to support          |
 | `INSTAGRAM_COOKIES_BASE64`  | *(see below)*       | **Only for Stories** — Reels/Posts work without cookies |
 
@@ -164,58 +149,32 @@ Reels and Posts work without cookies. **Stories** require login — add cookies 
 1. Log into Instagram in your browser (Chrome or Firefox).
 2. Export cookies using [Get cookies.txt](https://chromewebstore.google.com/detail/get-cookiestxt/bgaddhkoddajcdgocldbbfleckgcbcid) (Chrome) or [cookies.txt](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/) (Firefox). Save as `instagram_cookies.txt`.
 3. Encode: `base64 -i instagram_cookies.txt | tr -d '\n'`
-4. In Railway → Variables: `INSTAGRAM_COOKIES_BASE64` = the base64 string.
+4. In Render → **Environment**: `INSTAGRAM_COOKIES_BASE64` = the base64 string.
 
 ---
 
 ## Part 4: If Something Goes Wrong
 
-| Problem                     | What to try                                                     |
-| --------------------------- | --------------------------------------------------------------- |
-| `bot_token` Field required  | Add `BOT_TOKEN` in Railway → Variables (Step 4). Must be set.   |
-| **Instagram Stories fail**   | Add `INSTAGRAM_COOKIES_BASE64` (see Part 3). Stories require cookies; Reels/Posts do not. |
-| Build fails                 | Check **Logs** for the error. Often: missing file or wrong path |
-| `yt-dlp: command not found` | Use the Dockerfile option instead (see below)                   |
-| `ffmpeg: command not found` | Same — use Dockerfile                                           |
-| Bot doesn't respond         | Check `BOT_TOKEN` is correct and has no extra spaces            |
-| Bot stops after a while     | Railway Hobby plan may sleep when idle; Pro keeps it running    |
-
----
-
-## Alternative: Use Dockerfile Instead
-
-If Nixpacks doesn't work, create a `Dockerfile` inyour project root:
-
-```dockerfile
-FROM python:3.11-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir yt-dlp
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-
-CMD ["python", "src/bot/main.py"]
-```
-
-Railway will detect the Dockerfile and use it instead of Nixpacks.
+| Problem                     | What to try                                                                 |
+| --------------------------- | --------------------------------------------------------------------------- |
+| `BOT_TOKEN` / `bot_token` error | Add `BOT_TOKEN` in Render → **Environment** (Step 4). No extra spaces.   |
+| **Instagram Stories fail**  | Add `INSTAGRAM_COOKIES_BASE64` (see Part 3).                                |
+| Build fails                 | Check **Logs** for the Docker build error.                                  |
+| Wrong service type          | Use a **Background Worker**, not a Web Service (no HTTP port for polling). |
+| Bot stops / billing         | Workers need a paid instance type for continuous running; check plan and billing. |
 
 ---
 
 ## Summary Checklist
 
-- [ ] Have Railway + GitHub accounts
-- [ ] Have Telegram bot token from BotFather
-- [ ] Create `nixpacks.toml` in project root
-- [ ] Run local build test (Docker or Python)
-- [ ] Push project to GitHub
-- [ ] Create Railway project → Deploy from GitHub
-- [ ] Add `BOT_TOKEN` in Variables
-- [ ] Check logs for `🟢 Bot is now running!`
+- [ ] Render + GitHub accounts
+- [ ] Telegram bot token from BotFather
+- [ ] Repo pushed to GitHub (with root `Dockerfile`)
+- [ ] New **Background Worker** on Render, runtime **Docker**
+- [ ] `BOT_TOKEN` set in **Environment**
+- [ ] Logs show `🟢 Bot is now running!`
 - [ ] Test bot on Telegram
 
 ---
 
-> **Done!** Your bot should now be running on Railway. Every push to `main` will trigger a new deployment.
+> **Done!** Your bot runs on Render as a Docker-based background worker. Pushes to the connected branch trigger new deploys (per your service settings).

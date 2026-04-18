@@ -10,7 +10,7 @@ from pydantic import Field
 class Settings(BaseSettings):
     """Bot configuration from .env file or environment variables."""
 
-    # Bot (BOT_TOKEN is the env var used by Railway, Docker, etc.)
+    # Bot (BOT_TOKEN is the env var used by Render, Docker, local .env, etc.)
     bot_token: str = Field(
         ...,
         description="Telegram bot token",
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     )
     instagram_cookies_base64: str | None = Field(
         default=None,
-        description="Base64-encoded cookies.txt (for Railway/deploy — decoded to temp file at startup)",
+        description="Base64-encoded cookies.txt (for cloud deploy — decoded to temp file at startup)",
         validation_alias="INSTAGRAM_COOKIES_BASE64",
     )
 
@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     )
     youtube_cookies_base64: str | None = Field(
         default=None,
-        description="Base64-encoded cookies.txt for YouTube (for Railway/deploy)",
+        description="Base64-encoded cookies.txt for YouTube (for cloud deploy)",
         validation_alias="YOUTUBE_COOKIES_BASE64",
     )
 
@@ -79,11 +79,11 @@ def _load_settings() -> Settings:
         if "bot_token" in str(e).lower() and not os.environ.get("BOT_TOKEN"):
             raise RuntimeError(
                 "BOT_TOKEN is required but not set. "
-                "Add it in Railway → Variables → BOT_TOKEN = your_token_from_BotFather"
+                "Add BOT_TOKEN in your host's environment (e.g. Render → Environment)."
             ) from e
         raise
 
-    # If INSTAGRAM_COOKIES_BASE64 is set (e.g. Railway), decode and write to temp file
+    # If INSTAGRAM_COOKIES_BASE64 is set (e.g. cloud deploy), decode and write to temp file
     if s.instagram_cookies_base64 and not s.instagram_cookies_file:
         try:
             cookie_bytes = base64.b64decode(s.instagram_cookies_base64)
